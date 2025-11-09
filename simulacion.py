@@ -1,6 +1,7 @@
 import numpy as np
 import simpy as sp
 import math
+from scipy import stats
 
 logs = False
 tiempo_simulacion = 168 # horas
@@ -18,23 +19,27 @@ class Pizzeria:
         self.estacion_preparacion = sp.PriorityResource(env, capacity=self.capacidad_estacion_preparacion)
 
         self.capacidad_horno = 10
-        self.horno = sp.Resource(env, capacity=self.capacidad_horno)
+        self.horno = sp.PriorityResource(env, capacity=self.capacidad_horno)
 
         self.capacidad_estacion_embalaje = 3
         self.estacion_embalaje = sp.PriorityResource(env, capacity=self.capacidad_estacion_embalaje)
 
         # Empleados
         self.cantidad_trabajadores = 5
-        self.trabajadores = sp.Resource(env, capacity=self.cantidad_trabajadores)
+        self.trabajadores = sp.PriorityResource(env, capacity=self.cantidad_trabajadores)
 
         self.cantidad_repartidores = 6
-        self.repartidores = sp.Resource(env, capacity=self.cantidad_repartidores)
+        self.repartidores = sp.PriorityResource(env, capacity=self.cantidad_repartidores)
 
         # Inventarios
         self.salsa_de_tomate = sp.Container(env, init=15000, capacity=15000) # en ml
         self.queso_mozzarella = sp.Container(env, init=1000, capacity=1000) # en unidades
         self.pepperoni = sp.Container(env, init=800, capacity=800) # en unidades
         self.mix_carnes = sp.Container(env, init=600, capacity=600) # en unidades
+
+        inventarios = [self.salsa_de_tomate, self.queso_mozzarella,
+                       self.pepperoni, self.mix_carnes]
+        self.en_reposicion = {inventario: False for inventario in inventarios}
 
         # Ingresos
         self.precio_pizza_queso = 7000
@@ -129,7 +134,7 @@ class Pizzeria:
         self.log_data += mensaje + '\n'
 
     
-    def obtener_tiempo_proxima_llamada(self, now):
+    def obtener_tiempo_proxima_llamada(self, now): # retorna tiempo en horas
         # Tasa de llamadas por hora según el horario del día
         hora_y_minuto_del_dia = now % 24 # Ejemplo: 14.5 -> 14:30 hrs
         hora_del_dia = math.floor(hora_y_minuto_del_dia) # Hora sin minutos
@@ -164,13 +169,178 @@ class Pizzeria:
                 tasa = self.tasas_dia_normal[hora_del_dia] # Tomar tasa correspondiente a la hora actual
                 tiempo_proxima_llamada = self.rng.exponential(1 / tasa)
 
-        return tiempo_proxima_llamada
+        return tiempo_proxima_llamada # unidades en horas
 
     
     def llegada_llamadas(self):
+        cliente = 0
+        
         while True:
-            tiempo_proxima_llamada = self.obtener_tiempo_proxima_llamada(self.env.now)
-            yield self.env.timeout(tiempo_proxima_llamada)
+            cliente += 1
 
-            # Añadir logica para manejar la llamada entrante y empezar el proceso de atención
-    
+            if self.logs:
+                self.log(f'{self.env.now}: Llega cliente {cliente}')
+
+            self.llamadas_totales += 1
+            
+            # Revisamos que exista una línea disponible.
+            if self.lineas_telefonicas.count < 3:
+                # Procedemos a atender la llamada
+                self.env.process(self.atender_llamada(cliente))
+                if self.logs:
+                    self.log(f'{self.env.now}: Cliente {cliente} es atendido por teléfono')
+
+            else:
+                # Rechazamos la llamada
+                self.llamadas_perdidas += 1
+                if self.logs:
+                    self.log(f'{self.env.now}: No hay lineas disponibles. Cliente {cliente} es rechazado')
+                
+                
+            # Esperamos a que llegue el siguiente cliente
+            tiempo_proxima_llamada = self.obtener_tiempo_proxima_llamada(self.env.now)
+            yield self.env.timeout(tiempo_proxima_llamada)    
+        
+    def atender_llamada(self, cliente):
+        # Vemos si este cliente es premium o no
+        premium = np.random.choice(a=[True, False], p=[3/20, 17/20])
+        if premium:
+            prioridad = 1
+            if self.logs:
+                self.log(f'{self.env.now}: Cliente {cliente} es premium')
+        else:
+            prioridad = 2
+            if self.logs:
+                self.log(f'{self.env.now}: Cliente {cliente} es común')
+
+        # Generamos el tiempo que toma la atención por teléfono.
+        beta = np.random.gamma(shape=4, scale=0.5, size=1)/60    
+        with self.lineas_telefonicas.request() as linea:
+            yield self.env.timeout(beta) # Esperamos
+        
+        
+        # Procedemos a preparar la pizza
+        cantidad_pizzas_a_preparar = np.random.choice(a=[1,2,3,4], p=[0.3,0.4,0.2,0.1])
+        lista_de_procesos_pizzas = []
+        for i in range(1,cantidad_pizzas_a_preparar+1):
+            lista_de_procesos_pizzas.append(self.env.process(self.preparar_pizza(cliente, premium, i, prioridad)))
+            
+        # Esperamos a que todas las pizzas estén listas (preparadas, cocinadas y embaladas) para proceder al despacho.
+        yield sp.AllOf(self.env, lista_de_procesos_pizzas)
+        if self.logs:
+            self.log(f'{self.env.now}: Todas las pizzas del cliente {cliente} están listas. Se procede al despacho')
+
+        self.env.process(self.despacho(cliente, premium, prioridad))
+        
+        
+    def preparar_pizza(self, cliente, premium, num_pizza, prioridad):
+        # ATENCION !!!!!! No sé como incluir todo este tema de los trabajadores.
+        
+        # Tipo de pizza a preparar:
+        # 1. Queso
+        # 2. Pepperoni
+        # 3. Todas carnes
+        
+        if premium:
+            tipo_pizza = np.random.choice(a=[1,2,3], p=[0.3,0.6,0.1])
+        else:
+            tipo_pizza = np.random.choice(a=[1,2,3], p=[0.1,0.4,0.5])
+        
+        with self.estacion_preparacion.request(priority=prioridad) as estacion_request:
+            yield estacion_request
+
+            with self.trabajadores.request(priority=prioridad) as trabajador_request:
+                yield trabajador_request
+
+                # Vemos cuanta salsa se añadirá
+                xi_1 = np.random.exponential(scale = 250)
+                if xi_1 > self.salsa_de_tomate.level:
+                    yield self.env.process(self.proceso_reposicion(self.salsa_de_tomate))
+                # Agregamos Salsa
+                gamma_1 = np.random.beta(a = 5, b = 2.2)/60
+                yield self.env.timeout(gamma_1) # Esperamos a que se ponga la salsa
+                # Descontamos la salsa
+                yield self.salsa_de_tomate.get(xi_1)
+                
+                # Vemos cuanto queso se añadirá
+                xi_2 = np.random.negative_binomial(n = 25, p = 0.52)
+                if xi_2 > self.queso_mozzarella.level:
+                    yield self.env.process(self.proceso_reposicion(self.queso_mozzarella))
+                # Agregamos queso
+                gamma_2 = np.random.triangular(left = 0.9, mode = 1, right = 1.2)/60
+                yield self.env.timeout(gamma_2) # Esperamos a que se ponga el queso
+                # Descontamos queso
+                yield self.queso_mozzarella.get(xi_2)
+                
+                # Agregamos Pepperoni si pizza es de pepperoni o mix de carnes
+                if tipo_pizza==2 or tipo_pizza==3:
+                    # Vemos cuanto pepperoni se añadirá
+                    xi_3 = np.random.poisson(lam = 20)
+                    if xi_3 > self.pepperoni.level:
+                        yield self.env.process(self.proceso_reposicion(self.pepperoni))
+                    # Agregamos pepperoni
+                    gamma_3 = np.random.lognormal(mean=0.5, sigma=0.25)/60
+                    yield self.env.timeout(gamma_3) # Esperamos a que se ponga el pepperoni
+                    # Descontamos pepperoni
+                    yield self.pepperoni.get(xi_3)
+                    
+                # Agregamos Mix
+                if tipo_pizza==3:
+                    # Vemos cuanta carne se añadirá
+                    xi_4 = np.random.binomial(n = 16, p = 0.42)
+                    if xi_4 > self.mix_carnes.level:
+                        yield self.env.process(self.proceso_reposicion(self.mix_carnes))
+                    # Agregamos mix
+                    gamma_4 = np.random.uniform(low = 1, high = 1.8)/60
+                    yield self.env.timeout(gamma_4) # Esperamos a que se ponga el mix
+                    # Descontamos Mix
+                    yield self.mix_carnes.get(xi_4)
+                    
+        # Procedemos a hornear la pizza
+        self.env.process(self.hornear(cliente, premium,num_pizza, prioridad))
+        
+        
+    def hornear(self, cliente, premium, num_pizza, prioridad):
+        with self.horno.request(priority=prioridad) as horno_request:
+            yield horno_request
+            delta = np.random.lognormal(mean=2.5, sigma=0.2)/60
+            yield self.env.timeout(delta)
+        
+        self.env.process(self.embalar(cliente, premium, prioridad))
+            
+            
+    def embalar(self, cliente, premium, prioridad):
+        with self.estacion_embalaje.request(priority=prioridad) as embalaje_request:
+            yield embalaje_request
+            
+            with self.trabajadores.request(priority=prioridad) as trabajador_request:
+                yield trabajador_request
+                epsilon = np.random.triangular(left = 1.1, mode = 2, right = 2.3)/60
+                yield self.env.timeout(epsilon)
+            
+        
+    def despacho(self, cliente, premium, prioridad):
+        with self.repartidores.request(priority=prioridad) as repartidor_request:
+            yield repartidor_request
+            if self.logs:
+                self.log(f'{self.env.now}: El repartidor procede a llevar el pedido del cliente {cliente}.')
+            
+            # Esperamos el tiempo que toma ir del local al domicilio.
+            tiempo_local_domicilio = np.random.gamma(shape = 7.5, scale = 0.9)/60
+            yield self.env.timeout(tiempo_local_domicilio)
+            if self.logs:
+                self.log(f'{self.env.now}: Llega el repartidor al domicilio del cliente {cliente}.')
+            
+            # Esperamos el tiempo que toma ir del domicilio al local.
+            tiempo_domicilio_local = np.random.gamma(shape = 7.5, scale = 0.9)/60
+            yield self.env.timeout(tiempo_domicilio_local)
+            if self.logs:
+                self.log(f'{self.env.now}: Llega el repartidor al local.')
+
+    def proceso_reposicion(self, inventario):
+        cantidad_a_reponer = inventario.capacity - inventario.level
+        tiempo_reposicion = self.obtener_tiempo_reposicion(inventario)
+        yield self.env.timeout(tiempo_reposicion)
+        yield inventario.put(cantidad_a_reponer)
+
+        self.en_reposicion[inventario] = False
