@@ -167,7 +167,12 @@ class Pizzeria:
         self.env.process(self.revisar_inventario_salsa())
         self.env.process(self.revisar_inventarios())
 
-        self.env.run(until=self.evento_termino_simulacion)
+        try:
+            self.env.run(until=self.evento_termino_simulacion)
+        except RuntimeError:
+            # Si no hay más eventos programados, la simulación termina naturalmente
+            if self.logs:
+                self.log('Simulación terminó sin eventos pendientes.')
 
         if self.logs:
             self.log('Simulación terminada.')
@@ -258,10 +263,15 @@ class Pizzeria:
                     if pedidos_pendientes:
                         if self.logs:
                             self.log(f'{self.env.now}: Esperando a que terminen {len(pedidos_pendientes)} pedidos activos...')
-                        yield sp.AllOf(self.env, pedidos_pendientes)
-                        if self.logs:
-                            self.log(f'{self.env.now}: Todos los pedidos activos han terminado.')
-                self.evento_termino_simulacion.succeed()
+                        try:
+                            yield sp.AllOf(self.env, pedidos_pendientes)
+                            if self.logs:
+                                self.log(f'{self.env.now}: Todos los pedidos activos han terminado.')
+                        except:
+                            if self.logs:
+                                self.log(f'{self.env.now}: No hay más eventos, asumiendo que pedidos terminaron.')
+                if not self.evento_termino_simulacion.triggered:
+                    self.evento_termino_simulacion.succeed()
                 break
             
             # Esperamos a que llegue el siguiente cliente
@@ -536,7 +546,11 @@ class Pizzeria:
         yield self.env.timeout(10) # Iniciar simulación a las 10 AM 
         
         while True:
+            if self.env.now >= self.tiempo_limite:
+                break
             yield self.env.timeout(0.5) # Revisamos cada 30 minutos
+            if self.env.now >= self.tiempo_limite:
+                break
             if self.trabajadores.count < self.cantidad_trabajadores:
                 with self.trabajadores.request() as trabajador_request:
                     yield trabajador_request
@@ -549,7 +563,11 @@ class Pizzeria:
         yield self.env.timeout(10) # Iniciar simulación a las 10 AM
 
         while True:
+            if self.env.now >= self.tiempo_limite:
+                break
             yield self.env.timeout(3/4)
+            if self.env.now >= self.tiempo_limite:
+                break
             if self.logs:
                 self.log(f'{self.env.now}: Revisión periódica de inventarios.')
             if self.trabajadores.count < self.cantidad_trabajadores:
@@ -561,7 +579,7 @@ class Pizzeria:
                         if inventario.level < self.umbral_reposicion[inventario] and not self.en_reposicion[inventario]:
                             if self.logs:
                                 self.log(f'{self.env.now}: Nivel de {self.nombres_inventarios[inventario]} bajo ({inventario.level}). Iniciando reposición.')
-                            self.env.process(self.proceso_reposicion(inventario))
+                            yield self.env.process(self.proceso_reposicion(inventario))
                         else:
                             if self.logs:
                                 self.log(f'{self.env.now}: Nivel de {self.nombres_inventarios[inventario]} suficiente ({inventario.level}). No se requiere reposición.')
@@ -594,5 +612,5 @@ class Pizzeria:
 
 env = sp.Environment()
 pizzeria = Pizzeria(env)
-pizzeria.iniciar_simulacion(4, 1, logs=True)
+pizzeria.iniciar_simulacion(168, 1, logs=False)
 
