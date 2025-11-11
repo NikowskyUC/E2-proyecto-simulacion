@@ -37,9 +37,13 @@ class Pizzeria:
         self.pepperoni = sp.Container(env, init=800, capacity=800) # en unidades
         self.mix_carnes = sp.Container(env, init=600, capacity=600) # en unidades
 
-        inventarios = [self.salsa_de_tomate, self.queso_mozzarella,
+        self.inventarios = [self.salsa_de_tomate, self.queso_mozzarella,
                        self.pepperoni, self.mix_carnes]
-        self.en_reposicion = {inventario: False for inventario in inventarios}
+        self.en_reposicion = {inventario: False for inventario in self.inventarios}
+        self.umbral_reposicion = {self.salsa_de_tomate: 3000,
+                                  self.queso_mozzarella: 200,
+                                  self.pepperoni: 300,
+                                  self.mix_carnes: 100}
 
         # Ingresos
         self.precio_pizza_queso = 7000
@@ -151,9 +155,15 @@ class Pizzeria:
         if self.logs:
             self.log(f'Iniciando simulación por {tiempo_horas} horas con semilla {seed}')
         
-        self.env.process(self.llegada_llamadas())
 
-        self.env.run(until=tiempo_horas)
+        self.ultima_atencion = None
+        self.evento_termino_simulacion = self.env.event()
+
+        self.env.process(self.llegada_llamadas())
+        self.env.process(self.revisar_inventario_salsa())
+        self.env.process(self.revisar_inventarios())
+
+        self.env.run(until=self.evento_termino_simulacion) # TODO: CAMBIAR; EL RUN DEBE SER HASTA EL TERMINO DEL TIEMPO Y EL ULTIMO PEDIDO COMPLETADO
         
         
         # Calculamos métricas
@@ -230,6 +240,18 @@ class Pizzeria:
         cliente = 0
         
         while True:
+
+            if self.env.now >= self.tiempo_limite:
+                if self.logs:
+                    self.log(f'{self.env.now}: Se ha alcanzado el tiempo límite de la simulación. No se aceptan más llamadas.')
+                if self.ultimo_pedido is not None:
+                    if not self.ultimo_pedido.triggered:
+                        yield self.ultimo_pedido
+                self.evento_termino_simulacion.succeed()
+                break
+            # Esperamos a que llegue el siguiente cliente
+            tiempo_proxima_llamada = self.obtener_tiempo_proxima_llamada(self.env.now)
+            yield self.env.timeout(tiempo_proxima_llamada)    
             # Actualizamos métricas
             cliente += 1
             self.llamadas_totales += 1
@@ -239,11 +261,12 @@ class Pizzeria:
                 self.log(f'{self.env.now}: Llega cliente {cliente}')
 
             
-            
+
             # Revisamos que exista una línea disponible.
             if self.lineas_telefonicas.count < 3:
                 # Procedemos a atender la llamada
-                proceso_atender_llamada = self.env.process(self.atender_llamada(cliente))
+                self.ultimo_pedido = self.env.process(self.atender_llamada(cliente))
+
                 if self.logs:
                     self.log(f'{self.env.now}: Cliente {cliente} es atendido por teléfono')
 
@@ -254,9 +277,6 @@ class Pizzeria:
                     self.log(f'{self.env.now}: No hay lineas disponibles. Cliente {cliente} es rechazado')
 
                 
-            # Esperamos a que llegue el siguiente cliente
-            tiempo_proxima_llamada = self.obtener_tiempo_proxima_llamada(self.env.now)
-            yield self.env.timeout(tiempo_proxima_llamada)    
         
     def atender_llamada(self, cliente):
         # Vemos si este cliente es premium o no
@@ -317,13 +337,14 @@ class Pizzeria:
             self.log(f'{self.env.now}: Todas las pizzas del cliente {cliente} están listas. Se procede al despacho')
         
         
-        self.env.process(self.despacho(cliente, premium, prioridad, inicio_tiempo_orden, valor_orden))
+        yield self.env.process(self.despacho(cliente, premium, prioridad, inicio_tiempo_orden, valor_orden))
         
         # Registramos horas extras
-        if self.finde and self.env.now//24 >= 1:
-            self.horas_extras += self.env.now//24 - 1 
-        elif (not self.finde) and self.env.now//24 >= 23:
-            self.horas_extras += self.env.now//24 - 23 
+        hora_del_dia = self.env.now % 24
+        if self.finde and 10 > hora_del_dia >= 0: # Madrugada
+            self.horas_extras += hora_del_dia 
+        elif (not self.finde) and (hora_del_dia > 23 or hora_del_dia < 10): # Pasado las 11 PM o madrugada
+            self.horas_extras += hora_del_dia - 23 if hora_del_dia > 23 else hora_del_dia + 1 
             
         
         
@@ -344,8 +365,8 @@ class Pizzeria:
 
                 # Vemos cuanta salsa se añadirá
                 xi_1 = np.random.exponential(scale = 250)
-                '''if xi_1 > self.salsa_de_tomate.level:
-                    yield self.env.process(self.proceso_reposicion(self.salsa_de_tomate))'''
+                if xi_1 > self.salsa_de_tomate.level:
+                    yield self.env.process(self.proceso_reposicion(self.salsa_de_tomate))
                 # Agregamos Salsa
                 gamma_1 = np.random.beta(a = 5, b = 2.2)/60
                 yield self.env.timeout(gamma_1) # Esperamos a que se ponga la salsa
@@ -354,8 +375,8 @@ class Pizzeria:
                 
                 # Vemos cuanto queso se añadirá
                 xi_2 = np.random.negative_binomial(n = 25, p = 0.52)
-                '''if xi_2 > self.queso_mozzarella.level:
-                    yield self.env.process(self.proceso_reposicion(self.queso_mozzarella))'''
+                if xi_2 > self.queso_mozzarella.level:
+                    yield self.env.process(self.proceso_reposicion(self.queso_mozzarella))
                 # Agregamos queso
                 gamma_2 = np.random.triangular(left = 0.9, mode = 1, right = 1.2)/60
                 yield self.env.timeout(gamma_2) # Esperamos a que se ponga el queso
@@ -366,8 +387,8 @@ class Pizzeria:
                 if tipo_pizza==2 or tipo_pizza==3:
                     # Vemos cuanto pepperoni se añadirá
                     xi_3 = np.random.poisson(lam = 20)
-                    '''if xi_3 > self.pepperoni.level:
-                        yield self.env.process(self.proceso_reposicion(self.pepperoni))'''
+                    if xi_3 > self.pepperoni.level:
+                        yield self.env.process(self.proceso_reposicion(self.pepperoni))
                     # Agregamos pepperoni
                     gamma_3 = np.random.lognormal(mean=0.5, sigma=0.25)/60
                     yield self.env.timeout(gamma_3) # Esperamos a que se ponga el pepperoni
@@ -378,8 +399,8 @@ class Pizzeria:
                 if tipo_pizza==3:
                     # Vemos cuanta carne se añadirá
                     xi_4 = np.random.binomial(n = 16, p = 0.42)
-                    '''if xi_4 > self.mix_carnes.level:
-                        yield self.env.process(self.proceso_reposicion(self.mix_carnes))'''
+                    if xi_4 > self.mix_carnes.level:
+                        yield self.env.process(self.proceso_reposicion(self.mix_carnes))
                     # Agregamos mix
                     gamma_4 = np.random.uniform(low = 1, high = 1.8)/60
                     yield self.env.timeout(gamma_4) # Esperamos a que se ponga el mix
@@ -455,13 +476,38 @@ class Pizzeria:
                 self.log(f'{self.env.now}: Llega el repartidor al local.')
                 
 
-    """def proceso_reposicion(self, inventario):
+    def revisar_inventario_salsa(self):
+        while True:
+            yield self.env.timeout(0.5) # Revisamos cada 30 minutos
+            if self.trabajadores.count < self.cantidad_trabajadores:
+                with self.trabajadores.request() as trabajador_request:
+                    yield trabajador_request
+                    if self.salsa_de_tomate.level < self.umbral_reposicion[self.salsa_de_tomate] and not self.en_reposicion[self.salsa_de_tomate]:
+                        if self.logs:
+                            self.log(f'{self.env.now}: Nivel de salsa de tomate bajo ({self.salsa_de_tomate.level} ml). Iniciando reposición.')
+                        self.env.process(self.proceso_reposicion(self.salsa_de_tomate))
+
+    def revisar_inventarios(self):
+        while True:
+            yield self.env.timeout(3/4)
+            if self.trabajadores.count < self.cantidad_trabajadores:
+                with self.trabajadores.request() as trabajador_request:
+                    yield trabajador_request
+                    for inventario in self.inventarios:
+                        if inventario.level < self.umbral_reposicion[inventario] and not self.en_reposicion[inventario]:
+                            if self.logs:
+                                self.log(f'{self.env.now}: Nivel de {inventario} bajo ({inventario.level}). Iniciando reposición.')
+                            self.env.process(self.proceso_reposicion(inventario))
+    
+
+    def proceso_reposicion(self, inventario):
         cantidad_a_reponer = inventario.capacity - inventario.level
         tiempo_reposicion = self.obtener_tiempo_reposicion(inventario)
+        self.en_reposicion[inventario] = True
         yield self.env.timeout(tiempo_reposicion)
         yield inventario.put(cantidad_a_reponer)
 
-        self.en_reposicion[inventario] = False"""
+        self.en_reposicion[inventario] = False
 
 
 
