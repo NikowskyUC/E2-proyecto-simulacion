@@ -171,7 +171,7 @@ class Pizzeria:
 
         if self.logs:
             self.log('Simulación terminada.')
-            self.log(f'Tiempo de simulación: {self.env.now} horas')
+            self.log(f'Tiempo de simulación: {self.env.now - 10} horas')
     
     def obtener_metricas(self):
         # Calculamos métricas
@@ -248,6 +248,12 @@ class Pizzeria:
         cliente = 0
         
         while True:
+            # Esperamos a que llegue el siguiente cliente
+            tiempo_proxima_llamada = self.obtener_tiempo_proxima_llamada(self.env.now)
+            if self.env.now + tiempo_proxima_llamada >= self.tiempo_limite:
+                yield self.env.timeout(self.tiempo_limite - self.env.now)
+            else: 
+                yield self.env.timeout(tiempo_proxima_llamada)    
 
             if self.env.now >= self.tiempo_limite:
                 if self.logs:
@@ -261,9 +267,6 @@ class Pizzeria:
                         yield sp.AllOf(self.env, pedidos_pendientes)
                 self.evento_termino_simulacion.succeed()
                 break
-            # Esperamos a que llegue el siguiente cliente
-            tiempo_proxima_llamada = self.obtener_tiempo_proxima_llamada(self.env.now)
-            yield self.env.timeout(tiempo_proxima_llamada)    
             # Actualizamos métricas
             cliente += 1
             self.llamadas_totales += 1
@@ -442,7 +445,7 @@ class Pizzeria:
         if self.logs:
             self.log(f'{self.env.now}: Se terminó de preparar la pizza {num_pizza} del cliente {cliente}, solicitando horno...')
         # Procedemos a hornear la pizza
-        self.env.process(self.hornear(cliente, premium, prioridad, num_pizza))
+        yield self.env.process(self.hornear(cliente, premium, prioridad, num_pizza))
         
         
     def hornear(self, cliente, premium,  prioridad, num_pizza):
@@ -455,7 +458,7 @@ class Pizzeria:
             if self.logs:
                 self.log(f'{self.env.now}: La pizza {num_pizza} del cliente {cliente} salió del horno, solicitando embalaje.')
         
-        self.env.process(self.embalar(cliente, premium, prioridad, num_pizza))
+        yield self.env.process(self.embalar(cliente, premium, prioridad, num_pizza))
             
             
     def embalar(self, cliente, premium, prioridad, num_pizza):
@@ -499,10 +502,12 @@ class Pizzeria:
                 self.tiempos_procesamiento_normales_semana.append(fin_tiempo_orden-inicio_tiempo_orden)
                 
             # Registramos si el pedido tuvo un retraso.
-            if fin_tiempo_orden-inicio_tiempo_orden<=1:
-                self.compensacion += 0.2*valor_orden
-                if self.logs:
-                    self.log(f'{self.env.now}: El pedido del cliente {cliente} tuvo un retraso. Se aplica compensación de ${0.2*valor_orden}.')
+            if fin_tiempo_orden-inicio_tiempo_orden > 1:
+
+                if premium:
+                    self.compensacion += 0.2*valor_orden
+                    if self.logs:
+                        self.log(f'{self.env.now}: El pedido del cliente {cliente} tuvo un retraso. Se aplica compensación de ${0.2*valor_orden}.')
                 
                 if premium and self.finde:
                     self.pedidos_tardios_premium_finde += 1
@@ -580,4 +585,4 @@ class Pizzeria:
 
 env = sp.Environment()
 pizzeria = Pizzeria(env)
-pizzeria.iniciar_simulacion(10, 1, logs=True)
+pizzeria.iniciar_simulacion(1, 1, logs=True)
