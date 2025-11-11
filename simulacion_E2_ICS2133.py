@@ -248,13 +248,7 @@ class Pizzeria:
         cliente = 0
         
         while True:
-            # Esperamos a que llegue el siguiente cliente
-            tiempo_proxima_llamada = self.obtener_tiempo_proxima_llamada(self.env.now)
-            if self.env.now + tiempo_proxima_llamada >= self.tiempo_limite:
-                yield self.env.timeout(self.tiempo_limite - self.env.now)
-            else: 
-                yield self.env.timeout(tiempo_proxima_llamada)    
-
+            # Verificar si ya alcanzamos el tiempo límite ANTES de esperar
             if self.env.now >= self.tiempo_limite:
                 if self.logs:
                     self.log(f'{self.env.now}: Se ha alcanzado el tiempo límite de la simulación. No se aceptan más llamadas.')
@@ -265,8 +259,21 @@ class Pizzeria:
                         if self.logs:
                             self.log(f'{self.env.now}: Esperando a que terminen {len(pedidos_pendientes)} pedidos activos...')
                         yield sp.AllOf(self.env, pedidos_pendientes)
+                        if self.logs:
+                            self.log(f'{self.env.now}: Todos los pedidos activos han terminado.')
                 self.evento_termino_simulacion.succeed()
                 break
+            
+            # Esperamos a que llegue el siguiente cliente
+            tiempo_proxima_llamada = self.obtener_tiempo_proxima_llamada(self.env.now)
+            if self.env.now + tiempo_proxima_llamada >= self.tiempo_limite:
+                if self.logs:
+                    self.log(f'{self.env.now}: La próxima llamada excede el tiempo límite de la simulación. Avanzando al tiempo límite.')
+                yield self.env.timeout(self.tiempo_limite - self.env.now)
+                continue
+            else: 
+                yield self.env.timeout(tiempo_proxima_llamada)
+            
             # Actualizamos métricas
             cliente += 1
             self.llamadas_totales += 1
@@ -549,6 +556,8 @@ class Pizzeria:
                 with self.trabajadores.request() as trabajador_request:
                     yield trabajador_request
                     for inventario in self.inventarios:
+                        if inventario == self.salsa_de_tomate:
+                            continue  # La salsa de tomate se revisa en otro proceso
                         if inventario.level < self.umbral_reposicion[inventario] and not self.en_reposicion[inventario]:
                             if self.logs:
                                 self.log(f'{self.env.now}: Nivel de {self.nombres_inventarios[inventario]} bajo ({inventario.level}). Iniciando reposición.')
@@ -585,4 +594,5 @@ class Pizzeria:
 
 env = sp.Environment()
 pizzeria = Pizzeria(env)
-pizzeria.iniciar_simulacion(1, 1, logs=True)
+pizzeria.iniciar_simulacion(4, 1, logs=True)
+
