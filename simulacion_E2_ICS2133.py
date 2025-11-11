@@ -149,7 +149,7 @@ class Pizzeria:
 
     
     def iniciar_simulacion(self, tiempo_horas, seed, logs=False):
-        self.tiempo_limite = tiempo_horas
+        self.tiempo_limite = tiempo_horas + 10 # Se suma 10 para iniciar simulacion a las 10 AM
         self.logs = logs
         self.log_data = ''
 
@@ -244,6 +244,7 @@ class Pizzeria:
 
     
     def llegada_llamadas(self):
+        yield self.env.timeout(10)  # Iniciar simulación a las 10 AM
         cliente = 0
         
         while True:
@@ -520,6 +521,8 @@ class Pizzeria:
                 
 
     def revisar_inventario_salsa(self):
+        yield self.env.timeout(10) # Iniciar simulación a las 10 AM 
+        
         while True:
             yield self.env.timeout(0.5) # Revisamos cada 30 minutos
             if self.trabajadores.count < self.cantidad_trabajadores:
@@ -531,6 +534,8 @@ class Pizzeria:
                         self.env.process(self.proceso_reposicion(self.salsa_de_tomate))
 
     def revisar_inventarios(self):
+        yield self.env.timeout(10) # Iniciar simulación a las 10 AM
+
         while True:
             yield self.env.timeout(3/4)
             if self.logs:
@@ -575,4 +580,4 @@ class Pizzeria:
 
 env = sp.Environment()
 pizzeria = Pizzeria(env)
-pizzeria.iniciar_simulacion(72, 1, logs=True)
+pizzeria.iniciar_simulacion(10, 1, logs=True)
