@@ -191,18 +191,27 @@ class Pizzeria:
         
         self.proporcion_llamadas_perdidas = self.llamadas_perdidas / self.llamadas_totales
         
-        self.proporcion_pedidos_tardios_normales_finde = self.pedidos_tardios_normales_finde / self.llamadas_totales
-        self.proporcion_pedidos_tardios_normales_semana = self.pedidos_tardios_normales_semana / self.llamadas_totales
-        self.proporcion_pedidos_tardios_premium_finde = self.pedidos_tardios_premium_finde  / self.llamadas_totales
-        self.proporcion_pedidos_tardios_premium_semana = self.pedidos_tardios_premium_semana / self.llamadas_totales
+        total_pedidos_tardios = self.pedidos_tardios_normales_finde + self.pedidos_tardios_normales_semana + self.pedidos_tardios_premium_finde + self.pedidos_tardios_premium_semana
+        self.proporcion_pedidos_tardios_normales = (self.pedidos_tardios_normales_finde + self.pedidos_tardios_normales_semana) / total_pedidos_tardios
+        self.proporcion_pedidos_tardios_premium = (self.pedidos_tardios_premium_finde + self.pedidos_tardios_premium_semana) / total_pedidos_tardios
+        self.proporcion_pedidos_tardios = total_pedidos_tardios / self.llamadas_totales
         
-        self.tiempo_promedio_procesamiento_normales_finde = np.mean(self.tiempos_procesamiento_normales_finde)
-        self.tiempo_promedio_procesamiento_normales_semana = np.mean(self.tiempos_procesamiento_normales_semana)
-        self.tiempo_promedio_procesamiento_premium_finde = np.mean(self.tiempos_procesamiento_premium_finde)
-        self.tiempo_promedio_procesamiento_premium_semana = np.mean(self.tiempos_procesamiento_premium_semana)
+        self.tiempo_promedio_procesamiento_normales = np.mean(self.tiempos_procesamiento_normales_semana + self.tiempos_procesamiento_normales_finde)
+        self.tiempo_promedio_procesamiento_premium = np.mean(self.tiempos_procesamiento_premium_finde + self.tiempos_procesamiento_premium_semana)
+        self.tiempo_promedio_procesamiento = np.mean(self.tiempos_procesamiento_premium_semana + self.tiempos_procesamiento_premium_finde + self.tiempos_procesamiento_normales_semana + self.tiempos_procesamiento_normales_finde)
         
         self.utilidad = self.ingresos - self.costos
         
+        return {
+            'Proporcion Llamadas Perdidas': self.proporcion_llamadas_perdidas,
+            'Proporcion Pedidos Tardíos': self.proporcion_pedidos_tardios,
+            'Proporcion Tardíos Normal': self.proporcion_pedidos_tardios_normales,
+            'Proporcion Tardíos Premium': self.proporcion_pedidos_tardios_premium,
+            'Tiempo Medio para Procesar un Pedido (min)': self.tiempo_promedio_procesamiento,
+            'Tiempo Medio para Procesar un Pedido Normal (min)': self.tiempo_promedio_procesamiento_normales,
+            'Tiempo Medio para Procesar un Pedido Premium (min)': self.tiempo_promedio_procesamiento_premium,
+            'Utilidad': self.utilidad
+        }
     
     def log(self, mensaje):
         print(mensaje)
@@ -608,9 +617,27 @@ class Pizzeria:
         
         return tiempo
 
+def replicas_simulación(iteraciones, tiempo_horas):
+    lista_resultados = []
+    for i in range(iteraciones):
+        np.random.seed(i)
+        env = sp.Environment()
+        pizzeria = Pizzeria(env)
+        pizzeria.iniciar_simulacion(tiempo_horas, i, logs=False)
+        lista_resultados.append(pizzeria.obtener_metricas())
+
+        print(f'Replica {i+1} completada.')
+        print()
+        print(lista_resultados[i])
+
+        print("")
+        print("--------------------------------")
+        print("")
+
+    return lista_resultados
+            
 
 
-env = sp.Environment()
-pizzeria = Pizzeria(env)
-pizzeria.iniciar_simulacion(168, 1, logs=False)
+resultados = replicas_simulación(10, tiempo_simulacion)
+
 
