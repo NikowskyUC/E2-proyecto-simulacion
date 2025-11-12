@@ -189,13 +189,16 @@ class Pizzeria:
         (4_000*13*5+4_000*15*2)*5 + (3_000*13*5+3_000*15*2)*6 + 
         (1.4*4_000*13*5+1.4*4_000*15*2)*self.horas_extras + (1.4*3_000*13*5+1.4*3_000*15*2)*self.horas_extras)
         
+
         self.proporcion_llamadas_perdidas = self.llamadas_perdidas / self.llamadas_totales
         
-        total_pedidos_tardios = self.pedidos_tardios_normales_finde + self.pedidos_tardios_normales_semana + self.pedidos_tardios_premium_finde + self.pedidos_tardios_premium_semana
-        self.proporcion_pedidos_tardios_normales = (self.pedidos_tardios_normales_finde + self.pedidos_tardios_normales_semana) / total_pedidos_tardios
-        self.proporcion_pedidos_tardios_premium = (self.pedidos_tardios_premium_finde + self.pedidos_tardios_premium_semana) / total_pedidos_tardios
-        self.proporcion_pedidos_tardios = total_pedidos_tardios / self.llamadas_totales
+        self.proporcion_pedidos_tardios_normales = (self.pedidos_tardios_normales_finde + self.pedidos_tardios_normales_semana) / self.pedidos_normales_totales
+        self.proporcion_pedidos_tardios_premium = (self.pedidos_tardios_premium_finde + self.pedidos_tardios_premium_semana) / self.pedidos_premium_totales
+
+
+        self.proporcion_pedidos_tardios = (self.pedidos_tardios_normales_finde + self.pedidos_tardios_normales_semana + self.pedidos_tardios_premium_finde + self.pedidos_tardios_premium_semana) / self.llamadas_totales
         
+
         self.tiempo_promedio_procesamiento_normales = np.mean(self.tiempos_procesamiento_normales_semana + self.tiempos_procesamiento_normales_finde)
         self.tiempo_promedio_procesamiento_premium = np.mean(self.tiempos_procesamiento_premium_finde + self.tiempos_procesamiento_premium_semana)
         self.tiempo_promedio_procesamiento = np.mean(self.tiempos_procesamiento_premium_semana + self.tiempos_procesamiento_premium_finde + self.tiempos_procesamiento_normales_semana + self.tiempos_procesamiento_normales_finde)
@@ -627,8 +630,8 @@ def replicas_simulación(iteraciones, tiempo_horas):
         lista_resultados.append(pizzeria.obtener_metricas())
 
         print(f'Replica {i+1} completada.')
-        print()
-        print(lista_resultados[i])
+        # print()
+        # print(lista_resultados[i])
 
         print("")
         print("--------------------------------")
