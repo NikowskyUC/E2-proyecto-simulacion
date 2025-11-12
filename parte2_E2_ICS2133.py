@@ -4,53 +4,49 @@ import scipy.stats as st
 import matplotlib.pyplot as plt
 import pandas as pd
 
-
-
 # Fijamos alpha en 0.05
 ALPHA = 0.05
 
+promedios_resultados_metricas = {
+    'Proporcion Llamadas Perdidas': 0,
+    'Proporcion Pedidos Tardíos': 0,
+    'Proporcion Tardíos Normal': 0,
+    'Proporcion Tardíos Premium': 0,
+    'Tiempo Medio para Procesar un Pedido (min)': 0,
+    'Tiempo Medio para Procesar un Pedido Normal (min)': 0,
+    'Tiempo Medio para Procesar un Pedido Premium (min)': 0,
+    'Utilidad': 0
+}
 
 def mann_whitney_test(sim, real, nombre):
-    sim_ = sim[~np.isnan(sim)]
-    real_ = real[~np.isnan(real)]
 
-    if len(sim_) == 0 or len(real_) == 0:
-        print(f"[Mann-Whitney] {nombre}: datos insuficientes (n_sim={len(sim_)}, n_real={len(real_)})")
-        return np.nan, np.nan
+    stat, p = st.mannwhitneyu(sim, real, alternative="two-sided")
+    
+    print(f"Métrica: {nombre}")
+    print(f"Estadístico U: {stat:.2f}")
+    print(f"Valor-p: {p:.5f}")
 
-    u_stat, p_val = st.mannwhitneyu(sim_, real_, alternative='two-sided')
-    conclusion = "NO hay evidencia de diferencia (no rechazo H0)" if p_val >= 0.05 else "HAY evidencia de diferencia (rechazo H0)"
-    print(f"[Mann-Whitney] {nombre}: U={u_stat:.1f}, p={p_val:.4f} → {conclusion}")
-    return u_stat, p_val
-
-
-def ic_diferencia_medias_welch(sim, real, nombre, alpha=0.05):
-    sim_ = sim[~np.isnan(sim[nombre])]
-    real_ = real[~np.isnan(real[nombre])]
-    n1, n2 = len(sim_), len(real_)
-    if n1 < 2 or n2 < 2:
-        print(f"[IC Welch 95%] {nombre}: datos insuficientes (n_sim={n1}, n_real={n2})")
-        return (np.nan, np.nan, np.nan, False)
-
-    m1, m2 = np.mean(sim_), np.mean(real_)
-    v1 = np.var(sim_, ddof=1) if n1 > 1 else 0.0
-    v2 = np.var(real_, ddof=1) if n2 > 1 else 0.0
-
-    se = np.sqrt(v1/n1 + v2/n2)
-    if se == 0:
-        diff = m1 - m2
-        lo = hi = diff
-        contiene_cero = (diff == 0.0)
+    if p > (1 - ALPHA):
+        print(f"Los datos son válidos con un nivel de confianza del {1 - ALPHA}")
     else:
-        df = (v1/n1 + v2/n2)**2 / ((v1**2)/((n1**2)*(n1-1)) + (v2**2)/((n2**2)*(n2-1)))
-        tcrit = st.t.ppf(1 - alpha/2, df)
-        diff = m1 - m2
-        lo, hi = diff - tcrit*se, diff + tcrit*se
-        contiene_cero = (lo <= 0.0 <= hi)
+        print(f"Los datos no son válidos con el nivel de confianza de {1 - ALPHA}")
 
-    concl = "compatible (0 dentro del IC)" if contiene_cero else "difiere (0 fuera del IC)"
-    print(f"[IC Welch 95%] {nombre}: diff={diff:.4f}, IC=({lo:.4f}, {hi:.4f}) → {concl}")
-    return (diff, lo, hi, contiene_cero)
+    print()
+
+def ks_test(sim, real, nombre):
+
+    stat, p = st.ks_2samp(sim, real, alternative="two-sided")
+
+    print(f"Métrica: {nombre} (KS)")
+    print(f"Estadístico D: {stat:.4f}")
+    print(f"Valor-p: {p:.5f}")
+
+    if p > (1 - ALPHA):
+        print(f"Los datos son válidos con un nivel de confianza del {1 - ALPHA}")
+    else:
+        print(f"Los datos no son válidos con el nivel de confianza de {1 - ALPHA}")
+    print()
+
 
 # Leemos los datos que nos entregan 
 datos_validacion = pd.read_csv('E2-proyecto-simulacion/validar_pizzeria.csv').to_dict(orient='list')
@@ -83,8 +79,36 @@ for resultado in resultados:
     datos_reales[titulos_metricas[6]].append(resultado[titulos_metricas[6]])
     datos_reales[titulos_metricas[7]].append(resultado[titulos_metricas[7]])
 
-
-
+# CITA CHATGPT: "Tengo una lista con numeros arrays, necesito pasarlos a numeros normales"
+def to_1d_numeric(seq):
+    # Toma una lista que puede contener listas/arrays/escalars y la “aplana” a 1D float
+    chunks = []
+    for v in seq:
+        if v is None:
+            continue
+        a = np.atleast_1d(v).astype(float, copy=False)
+        chunks.append(a.ravel())
+    if not chunks:
+        return np.array([], dtype=float)
+    return np.concatenate(chunks)
+# FIN CITA CHATGPT
 
 # Realizamos las pruebas estadísticas
-mann_whitney_test(datos_reales, datos_validacion, titulos_metricas[0])
+for nombre in titulos_metricas:
+    reales = to_1d_numeric(datos_reales[nombre])
+    validacion = to_1d_numeric(datos_validacion[nombre])
+
+    print(f"=== Métrica: {nombre} ===")
+    print("Prueba de Mann-Whitney U:")
+    mann_whitney_test(reales, validacion, nombre)
+    print()
+
+    print(f"=== Métrica: {nombre} ===")
+    print("Prueba de KS:")
+    ks_test(reales, validacion, nombre)
+    print()
+    print()
+
+    # Recolectamos los datos de todas las replicas promedio por si nos sirve de algo en un futuro :)
+    promedios_resultados_metricas[nombre] = round(float(np.mean(reales)), 2)
+
