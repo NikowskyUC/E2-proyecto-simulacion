@@ -395,7 +395,7 @@ class Pizzeria:
         
         # Registramos horas extras
         hora_del_dia = self.env.now % 24
-        if self.finde and 10 > hora_del_dia >= 0: # Madrugada
+        if self.finde and 10 > hora_del_dia > 1: # Madrugada despues de la 1 AM
             self.horas_extras += hora_del_dia 
         elif (not self.finde) and (hora_del_dia > 23 or hora_del_dia < 10): # Pasado las 11 PM o madrugada
             self.horas_extras += hora_del_dia - 23 if hora_del_dia > 23 else hora_del_dia + 1 
@@ -620,6 +620,10 @@ class Pizzeria:
         
         return tiempo
 
+    def generar_reporte_logs(self, nombre_archivo):
+        with open(nombre_archivo, 'w') as f:
+            f.write(self.log_data)
+
 def replicas_simulación(iteraciones, tiempo_horas):
     lista_resultados = []
     for i in range(iteraciones):
@@ -640,7 +644,10 @@ def replicas_simulación(iteraciones, tiempo_horas):
     return lista_resultados
             
 
-
 resultados = replicas_simulación(10, tiempo_simulacion)
+
+
+    
+
 
 
