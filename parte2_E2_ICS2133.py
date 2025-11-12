@@ -1,4 +1,4 @@
-from simulacion_E2_ICS2133 import resultados
+from simulacion_E2_ICS2133 import replicas_simulación, tiempo_simulacion
 import numpy as np
 import scipy.stats as st
 import matplotlib.pyplot as plt
@@ -6,6 +6,8 @@ import pandas as pd
 
 # Fijamos alpha en 0.05
 ALPHA = 0.05
+
+resultados = replicas_simulación(10, tiempo_simulacion)
 
 promedios_resultados_metricas = {
     'Proporcion Llamadas Perdidas': 0,
@@ -49,7 +51,7 @@ def ks_test(sim, real, nombre):
 
 
 # Leemos los datos que nos entregan 
-datos_validacion = pd.read_csv('E2-proyecto-simulacion/validar_pizzeria.csv').to_dict(orient='list')
+datos_validacion = pd.read_csv('validar_pizzeria.csv').to_dict(orient='list')
 
 titulos_metricas = ['Proporcion Llamadas Perdidas', 'Proporcion Pedidos Tardíos', 'Proporcion Tardíos Normal',
         'Proporcion Tardíos Premium', 'Tiempo Medio para Procesar un Pedido (min)',
