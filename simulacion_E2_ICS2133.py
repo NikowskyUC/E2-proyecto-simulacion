@@ -66,7 +66,7 @@ class Pizzeria:
         self.costo_fijo_espacio_preparacion = 60000 # semanal
         self.costo_fijo_horno = 40000 # semanal
         self.costo_fijo_embalaje = 30000 # semanal
-        self.costos_fijos = (self.costo_fijo_lineas_telefonicas +
+        self.costos_fijos_semanales = (self.costo_fijo_lineas_telefonicas +
                                      self.costo_fijo_espacio_preparacion +
                                      self.costo_fijo_horno +
                                      self.costo_fijo_embalaje)
@@ -126,10 +126,17 @@ class Pizzeria:
         self.compensacion = 0
         
         self.horas_extras = 0
+        # Última hora de finalización por día (day -> hora del día en que terminó el último pedido)
+        self.ultima_hora_fin_por_dia = {}
         
         self.ingresos = 0 
         
         self.costos = 0 
+
+        self.salario_hora_empleado = 4000
+        self.salario_hora_repartidor = 3000
+        self.horas_trabajo_dia_normal = 13
+        self.horas_trabajo_finde = 15 
         
         
         # Métricas
@@ -178,17 +185,48 @@ class Pizzeria:
             self.log('Simulación terminada.')
             self.log(f'Tiempo de simulación: {self.env.now - 10} horas')
     
+    
+    
     def obtener_metricas(self):
         # Calculamos métricas
-        self.ingresos = 7_000*self.pizzas_queso + 9_000*self.pizzas_pepperoni + 12_000*self.pizzas_carnes
-        
-        self.costos = (10_000*self.llamadas_perdidas + 
-        0.3*7_000*self.pizzas_queso + 0.3*9_000*self.pizzas_pepperoni + 0.3*12_000*self.pizzas_carnes + 
-        self.costos_fijos + 
-        self.compensacion + 
-        (4_000*13*5+4_000*15*2)*5 + (3_000*13*5+3_000*15*2)*6 + 
-        (1.4*4_000*13*5+1.4*4_000*15*2)*self.horas_extras + (1.4*3_000*13*5+1.4*3_000*15*2)*self.horas_extras)
-        
+
+        # Calcular horas extras una vez por día usando la última finalización registrada
+        self.horas_extras = 0
+        for dia, hora_fin in self.ultima_hora_fin_por_dia.items():
+            es_finde = (dia % 7) in [5, 6]
+            if es_finde and 10 > hora_fin > 1:
+                self.horas_extras += hora_fin
+            elif (not es_finde) and (hora_fin > 23 or hora_fin < 10):
+                self.horas_extras += (hora_fin - 23) if hora_fin > 23 else (hora_fin + 1)
+
+        # Calcular horas de jornada efectivas durante la simulación
+        # Nota: self.tiempo_limite se definió como tiempo_horas + 10 en iniciar_simulacion
+        tiempo_simulacion_horas = getattr(self, 'tiempo_limite', 10) - 10
+        horas_normales = self.calcular_horas_normales(tiempo_simulacion_horas)
+        horas_finde = self.calcular_horas_finde(tiempo_simulacion_horas)
+        horas_jornada_total = horas_normales + horas_finde
+
+        # Semanas completas (redondeo hacia arriba). Si el tiempo_horas es 0 -> 0 semanas
+        semanas = int(math.ceil(tiempo_simulacion_horas / 168.0)) if tiempo_simulacion_horas > 0 else 0
+
+        # Costos por salario: asumir que cada trabajador/repartidor está contratado
+        # para cubrir la jornada completa (modelo previo), por lo que multiplicamos
+        # horas_jornada_total por la cantidad de empleados.
+        costo_trabajadores = self.salario_hora_empleado * horas_jornada_total * self.cantidad_trabajadores
+        costo_repartidores = self.salario_hora_repartidor * horas_jornada_total * self.cantidad_repartidores
+
+        self.costos = (
+            10_000 * self.llamadas_perdidas
+            + 0.3 * 7_000 * self.pizzas_queso
+            + 0.3 * 9_000 * self.pizzas_pepperoni
+            + 0.3 * 12_000 * self.pizzas_carnes
+            + self.costos_fijos_semanales * semanas
+            + self.compensacion
+            + costo_trabajadores
+            + costo_repartidores
+            + 1.4 * self.salario_hora_empleado * self.horas_extras * self.cantidad_trabajadores
+            + 1.4 * self.salario_hora_repartidor * self.horas_extras * self.cantidad_repartidores
+        )
 
         self.proporcion_llamadas_perdidas = self.llamadas_perdidas / self.llamadas_totales
         
@@ -196,7 +234,7 @@ class Pizzeria:
         self.proporcion_pedidos_tardios_premium = (self.pedidos_tardios_premium_finde + self.pedidos_tardios_premium_semana) / self.pedidos_premium_totales
 
 
-        self.proporcion_pedidos_tardios = (self.pedidos_tardios_normales_finde + self.pedidos_tardios_normales_semana + self.pedidos_tardios_premium_finde + self.pedidos_tardios_premium_semana) / self.llamadas_totales
+        self.proporcion_pedidos_tardios = (self.pedidos_tardios_normales_finde + self.pedidos_tardios_normales_semana + self.pedidos_tardios_premium_finde + self.pedidos_tardios_premium_semana) / (self.pedidos_normales_totales + self.pedidos_premium_totales)
         
 
         self.tiempo_promedio_procesamiento_normales = np.mean(self.tiempos_procesamiento_normales_semana + self.tiempos_procesamiento_normales_finde)
@@ -393,12 +431,8 @@ class Pizzeria:
         
         yield self.env.process(self.despacho(cliente, premium, prioridad, inicio_tiempo_orden, valor_orden))
         
-        # Registramos horas extras
-        hora_del_dia = self.env.now % 24
-        if self.finde and 10 > hora_del_dia >= 0: # Madrugada
-            self.horas_extras += hora_del_dia 
-        elif (not self.finde) and (hora_del_dia > 23 or hora_del_dia < 10): # Pasado las 11 PM o madrugada
-            self.horas_extras += hora_del_dia - 23 if hora_del_dia > 23 else hora_del_dia + 1 
+        # Nota: el cálculo de horas extras se hace una sola vez por día en obtener_metricas.
+        
             
         
         
@@ -529,23 +563,37 @@ class Pizzeria:
                 self.tiempos_procesamiento_normales_finde.append(fin_tiempo_orden-inicio_tiempo_orden)
             else:
                 self.tiempos_procesamiento_normales_semana.append(fin_tiempo_orden-inicio_tiempo_orden)
+            # Registrar la hora de finalización asociada al día de la jornada laboral.
+            # Si un pedido termina antes de las 10:00 (hora < 10), pertenece a la
+            # jornada que comenzó el día anterior (p. ej. termina a 01:30 -> jornada del día anterior).
+            dia_fin = int(fin_tiempo_orden // 24)
+            hora_fin = fin_tiempo_orden % 24
+            # asignar al día de la jornada (si hora < 10 -> día anterior)
+            dia_jornada = dia_fin if hora_fin >= 10 else max(dia_fin - 1, 0)
+            prev = self.ultima_hora_fin_por_dia.get(dia_jornada, -1)
+            if hora_fin > prev:
+                self.ultima_hora_fin_por_dia[dia_jornada] = hora_fin
                 
             # Registramos si el pedido tuvo un retraso.
-            if fin_tiempo_orden-inicio_tiempo_orden > 1:
-
+            retraso = fin_tiempo_orden - inicio_tiempo_orden > 1
+            if retraso:
+                # Pedido retrasado: será gratis para el cliente
                 if premium:
-                    self.compensacion += 0.2*valor_orden
+                    self.compensacion += 0.2 * valor_orden
                     if self.logs:
                         self.log(f'{self.env.now}: El pedido del cliente {cliente} tuvo un retraso. Se aplica compensación de ${0.2*valor_orden}.')
-                
+
                 if premium and self.finde:
                     self.pedidos_tardios_premium_finde += 1
                 elif premium and (not self.finde):
                     self.pedidos_tardios_premium_semana += 1
                 elif (not premium) and self.finde:
-                    self.pedidos_tardios_normales_finde +=1 
+                    self.pedidos_tardios_normales_finde += 1
                 else:
-                    self.pedidos_tardios_normales_semana +=1
+                    self.pedidos_tardios_normales_semana += 1
+            else:
+                # Pedido entregado a tiempo: sumar ingresos normalmente
+                self.ingresos += valor_orden
             
             # Esperamos el tiempo que toma ir del domicilio al local.
             tiempo_domicilio_local = self.rng.gamma(shape = 7.5, scale = 0.9)/60
@@ -620,6 +668,59 @@ class Pizzeria:
         
         return tiempo
 
+    def generar_reporte_logs(self, nombre_archivo):
+        with open(nombre_archivo, 'w') as f:
+            f.write(self.log_data)
+
+    def calcular_horas_normales(self, tiempo_horas: float) -> float:
+        # Esta funcion calcula la cantidad de horas laborales normales (sin horas extra)
+        # Que caben dentro del tiempo limite de la simulacion en dias normales
+        if tiempo_horas <= 0:
+            return 0.0
+
+        horas = 0.0
+        # número de días que la simulación puede cubrir (ceil para cubrir parcial último día)
+        max_dias = int(math.ceil(tiempo_horas / 24.0))
+        for k in range(max_dias):
+            # día de la semana: 0 = lunes, ..., 6 = domingo
+            dia_semana = k % 7
+            # sólo contar días normales (lunes-viernes => 0-4)
+            if dia_semana > 4:
+                continue
+            inicio_jornada = k * 24.0
+            fin_jornada = inicio_jornada + float(self.horas_trabajo_dia_normal)  # 10:00 -> 23:00 => 13 horas
+            # overlap entre [inicio_jornada, fin_jornada) y [0, tiempo_horas)
+            comienzo = max(inicio_jornada, 0.0)
+            termino = min(fin_jornada, tiempo_horas)
+            if termino > comienzo:
+                horas += termino - comienzo
+
+        return horas
+    
+    def calcular_horas_finde(self, tiempo_horas: float) -> float:
+        # Esta funcion calcula la cantidad de horas laborales normales (sin horas extra)
+        # Que caben dentro del tiempo limite de la simulacion en fines de semana
+        if tiempo_horas <= 0:
+            return 0.0
+
+        horas = 0.0
+        max_dias = int(math.ceil(tiempo_horas / 24.0))
+        for k in range(max_dias):
+            dia_semana = k % 7  # 0 = lunes, ..., 6 = domingo
+            # Sólo contar sábados y domingos
+            if dia_semana not in [5, 6]:
+                continue
+            inicio_jornada = k * 24.0  # corresponde a 10:00 del día k
+            fin_jornada = inicio_jornada + float(self.horas_trabajo_finde)
+            # overlap entre [inicio_jornada, fin_jornada) y [0, tiempo_horas)
+            comienzo = max(inicio_jornada, 0.0)
+            termino = min(fin_jornada, tiempo_horas)
+            if termino > comienzo:
+                horas += termino - comienzo
+
+        return horas
+
+
 def replicas_simulación(iteraciones, tiempo_horas):
     lista_resultados = []
     for i in range(iteraciones):
@@ -640,7 +741,11 @@ def replicas_simulación(iteraciones, tiempo_horas):
     return lista_resultados
             
 
+if __name__ == "__main__":
+    resultados = replicas_simulación(10, tiempo_simulacion)
 
-resultados = replicas_simulación(10, tiempo_simulacion)
+
+    
+
 
 
