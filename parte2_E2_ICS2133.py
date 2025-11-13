@@ -7,7 +7,7 @@ import pandas as pd
 # Fijamos alpha en 0.05
 ALPHA = 0.05
 
-resultados = replicas_simulación(10, tiempo_simulacion)
+resultados = replicas_simulación(200, tiempo_simulacion)
 
 promedios_resultados_metricas = {
     'Proporcion Llamadas Perdidas': 0,
