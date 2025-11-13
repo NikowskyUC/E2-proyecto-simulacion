@@ -642,7 +642,8 @@ class Pizzeria:
         while True:
             if self.env.now >= self.tiempo_limite:
                 break
-            yield self.env.timeout(0.5) # Revisamos cada 30 minutos
+            tiempo_proxima_revision = self.obtener_tiempo_proxima_revision_salsa(self.env.now)
+            yield self.env.timeout(tiempo_proxima_revision) # Revisamos cada 30 minutos en jornada laboral
             if self.env.now >= self.tiempo_limite:
                 break
                 
@@ -650,6 +651,73 @@ class Pizzeria:
                 self.log(f'{self.env.now}: Revisión periódica de inventario de salsa de tomate.')
 
             self.env.process(self.revisar_inventario_salsa())
+    
+    # Funcion solicitada a Github Copilot
+    def obtener_tiempo_proxima_revision_salsa(self, now):
+        # Retorna 30 minutos (0.5 horas) si estamos en jornada laboral
+        # Si no, salta al día siguiente a las 10 AM + 30 minutos
+        
+        hora_y_minuto_del_dia = now % 24  # Ejemplo: 14.5 -> 14:30 hrs
+        dia = now // 24  # Día desde el inicio de la simulación (empieza en 0)
+        
+        # Determinar si es fin de semana
+        es_finde = (dia % 7) in [5, 6]  # Sábado y domingo
+        
+        if es_finde:
+            # Fin de semana: horario de 10:00 a 01:00 (25 horas)
+            if 10 <= hora_y_minuto_del_dia <= 24 or 0 <= hora_y_minuto_del_dia < 1:  # Estamos en jornada laboral
+                return 0.5  # 30 minutos
+            else:
+                # Fuera de jornada: saltar al siguiente día laborable a las 10:30
+                if hora_y_minuto_del_dia >= 1:  # Después de la 1 AM
+                    # Saltar al mismo día a las 10:30
+                    tiempo_hasta_10_30 = 10.5 - hora_y_minuto_del_dia
+                else:
+                    # Estamos entre 01:00 y 10:00
+                    tiempo_hasta_10_30 = 10.5 - hora_y_minuto_del_dia
+                
+                # Verificar si el siguiente día laborable es también fin de semana
+                dia_siguiente = (dia + 1) % 7
+                if dia_siguiente in [5, 6]:
+                    # Sigue siendo fin de semana
+                    return tiempo_hasta_10_30
+                else:
+                    # Pasamos a día normal
+                    return tiempo_hasta_10_30
+        else:
+            # Día normal: horario de 10:00 a 23:00 (13 horas)
+            if 10 <= hora_y_minuto_del_dia < 23:  # Estamos en jornada laboral
+                # Verificar que no nos pasemos de las 23:00
+                if hora_y_minuto_del_dia + 0.5 <= 23:
+                    return 0.5  # 30 minutos
+                else:
+                    # La próxima revisión sería después de las 23:00
+                    # Saltar al siguiente día a las 10:30
+                    tiempo_hasta_fin_dia = 24 - hora_y_minuto_del_dia
+                    # Verificar si mañana es fin de semana
+                    dia_siguiente = (dia + 1) % 7
+                    if dia_siguiente in [5, 6]:
+                        # Mañana es fin de semana (sábado o domingo)
+                        return tiempo_hasta_fin_dia + 10.5
+                    else:
+                        # Mañana es día normal
+                        return tiempo_hasta_fin_dia + 10.5
+            else:
+                # Fuera de jornada
+                if hora_y_minuto_del_dia < 10:
+                    # Antes de las 10 AM: esperar hasta las 10:30
+                    return 10.5 - hora_y_minuto_del_dia
+                else:
+                    # Después de las 23:00: saltar al siguiente día a las 10:30
+                    tiempo_hasta_fin_dia = 24 - hora_y_minuto_del_dia
+                    # Verificar si mañana es fin de semana
+                    dia_siguiente = (dia + 1) % 7
+                    if dia_siguiente in [5, 6]:
+                        # Mañana es fin de semana
+                        return tiempo_hasta_fin_dia + 10.5
+                    else:
+                        # Mañana es día normal
+                        return tiempo_hasta_fin_dia + 10.5
     
     def revisar_inventario_salsa(self):
             if self.trabajadores.count < self.cantidad_trabajadores:
@@ -669,12 +737,81 @@ class Pizzeria:
         while True:
             if self.env.now >= self.tiempo_limite:
                 break
-            yield self.env.timeout(3/4)
+            tiempo_proxima_revision = self.obtener_tiempo_proxima_revision_inventarios(self.env.now)
+            yield self.env.timeout(tiempo_proxima_revision) # Revisamos cada 45 minutos
             if self.env.now >= self.tiempo_limite:
                 break
             if self.logs:
                 self.log(f'{self.env.now}: Revisión periódica de inventarios.')
             self.env.process(self.revisar_inventarios())
+    
+    # Funcion solicitada a Github Copilot
+    def obtener_tiempo_proxima_revision_inventarios(self, now):
+        # Retorna 45 minutos (0.75 horas) si estamos en jornada laboral
+        # Si no, salta al día siguiente a las 10 AM + 45 minutos
+        
+        hora_y_minuto_del_dia = now % 24  # Ejemplo: 14.5 -> 14:30 hrs
+        dia = now // 24  # Día desde el inicio de la simulación (empieza en 0)
+        
+        # Determinar si es fin de semana
+        es_finde = (dia % 7) in [5, 6]  # Sábado y domingo
+        
+        if es_finde:
+            # Fin de semana: horario de 10:00 a 01:00 (25 horas)
+            if 10 <= hora_y_minuto_del_dia < 25:  # Estamos en jornada laboral
+                return 0.75  # 45 minutos
+            else:
+                # Fuera de jornada: saltar al siguiente día laborable a las 10:45
+                if hora_y_minuto_del_dia >= 1:  # Después de la 1 AM
+                    # Saltar al mismo día a las 10:45
+                    tiempo_hasta_10_45 = 10.75 - hora_y_minuto_del_dia
+                else:
+                    # Estamos entre 01:00 y 10:00
+                    tiempo_hasta_10_45 = 10.75 - hora_y_minuto_del_dia
+                
+                # Verificar si el siguiente día laborable es también fin de semana
+                dia_siguiente = (dia + 1) % 7
+                if dia_siguiente in [5, 6]:
+                    # Sigue siendo fin de semana
+                    return tiempo_hasta_10_45
+                else:
+                    # Pasamos a día normal
+                    return tiempo_hasta_10_45
+        else:
+            # Día normal: horario de 10:00 a 23:00 (13 horas)
+            if 10 <= hora_y_minuto_del_dia < 23:  # Estamos en jornada laboral
+                # Verificar que no nos pasemos de las 23:00
+                if hora_y_minuto_del_dia + 0.75 <= 23:
+                    return 0.75  # 45 minutos
+                else:
+                    # La próxima revisión sería después de las 23:00
+                    # Saltar al siguiente día a las 10:45
+                    tiempo_hasta_fin_dia = 24 - hora_y_minuto_del_dia
+                    # Verificar si mañana es fin de semana
+                    dia_siguiente = (dia + 1) % 7
+                    if dia_siguiente in [5, 6]:
+                        # Mañana es fin de semana (sábado o domingo)
+                        return tiempo_hasta_fin_dia + 10.75
+                    else:
+                        # Mañana es día normal
+                        return tiempo_hasta_fin_dia + 10.75
+            else:
+                # Fuera de jornada
+                if hora_y_minuto_del_dia < 10:
+                    # Antes de las 10 AM: esperar hasta las 10:45
+                    return 10.75 - hora_y_minuto_del_dia
+                else:
+                    # Después de las 23:00: saltar al siguiente día a las 10:45
+                    tiempo_hasta_fin_dia = 24 - hora_y_minuto_del_dia
+                    # Verificar si mañana es fin de semana
+                    dia_siguiente = (dia + 1) % 7
+                    if dia_siguiente in [5, 6]:
+                        # Mañana es fin de semana
+                        return tiempo_hasta_fin_dia + 10.75
+                    else:
+                        # Mañana es día normal
+                        return tiempo_hasta_fin_dia + 10.75
+        
 
     def revisar_inventarios(self):
             if self.trabajadores.count < self.cantidad_trabajadores:
