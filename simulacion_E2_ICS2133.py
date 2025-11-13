@@ -3,7 +3,7 @@ import simpy as sp
 import math
 
 logs = True
-tiempo_simulacion = 40 # horas
+tiempo_simulacion = 168 # horas
 numero_replicas = 1
 
 class Pizzeria:
