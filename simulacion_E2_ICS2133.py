@@ -3,7 +3,7 @@ import simpy as sp
 import math
 
 logs = True
-tiempo_simulacion = 24 # horas
+tiempo_simulacion = 40 # horas
 numero_replicas = 1
 
 class Pizzeria:
@@ -171,9 +171,11 @@ class Pizzeria:
         self.evento_termino_simulacion = self.env.event()
         self.pedidos_activos = []  # Lista para rastrear todos los pedidos en proceso
 
+        self.evento_inventario_repuesto = {inventario: self.env.event() for inventario in self.inventarios}
+
         self.env.process(self.llegada_llamadas())
-        self.env.process(self.revisar_inventario_salsa())
-        self.env.process(self.revisar_inventarios())
+        self.env.process(self.temporizador_revision_salsa())
+        self.env.process(self.temporizador_revision_inventarios())
 
         try:
             self.env.run(until=self.evento_termino_simulacion)
@@ -461,9 +463,14 @@ class Pizzeria:
                 # Vemos cuanta salsa se añadirá
                 xi_1 = self.rng.exponential(scale = 250)
                 if xi_1 > self.salsa_de_tomate.level:
-                    if self.logs:
-                        self.log(f'{self.env.now}: No hay suficiente salsa de tomate para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')
-                    yield self.env.process(self.proceso_reposicion(self.salsa_de_tomate))
+                    if not self.en_reposicion[self.salsa_de_tomate]:
+                        if self.logs:
+                            self.log(f'{self.env.now}: No hay suficiente salsa de tomate para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')
+                        yield self.env.process(self.proceso_reposicion(self.salsa_de_tomate))
+                    else: 
+                        if self.logs:
+                            self.log(f'{self.env.now}: Esperando reposición de salsa de tomate para la pizza {num_pizza} del cliente {cliente}.')
+                        yield self.evento_inventario_repuesto[self.salsa_de_tomate]
                 # Agregamos Salsa
                 gamma_1 = self.rng.beta(a = 5, b = 2.2)/60
                 yield self.env.timeout(gamma_1) # Esperamos a que se ponga la salsa
@@ -473,9 +480,16 @@ class Pizzeria:
                 # Vemos cuanto queso se añadirá
                 xi_2 = self.rng.negative_binomial(n = 25, p = 0.52)
                 if xi_2 > self.queso_mozzarella.level:
-                    if self.logs:
-                        self.log(f'{self.env.now}: No hay suficiente queso mozzarella para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')  
-                    yield self.env.process(self.proceso_reposicion(self.queso_mozzarella))
+                    if not self.en_reposicion[self.queso_mozzarella]:
+                        if self.logs:
+                            self.log(f'{self.env.now}: No hay suficiente queso mozzarella para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')  
+                        yield self.env.process(self.proceso_reposicion(self.queso_mozzarella))
+                    else:
+                        if self.logs:
+                            self.log(f'{self.env.now}: Esperando reposición de queso mozzarella para la pizza {num_pizza} del cliente {cliente}.')
+                        yield self.evento_inventario_repuesto[self.queso_mozzarella]
+                        if self.logs:
+                            self.log(f'{self.env.now}: Reposición de queso mozzarella completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
                 # Agregamos queso
                 gamma_2 = self.rng.triangular(left = 0.9, mode = 1, right = 1.2)/60
                 yield self.env.timeout(gamma_2) # Esperamos a que se ponga el queso
@@ -487,9 +501,16 @@ class Pizzeria:
                     # Vemos cuanto pepperoni se añadirá
                     xi_3 = self.rng.poisson(lam = 20)
                     if xi_3 > self.pepperoni.level:
-                        if self.logs:
-                            self.log(f'{self.env.now}: No hay suficiente pepperoni para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')
-                        yield self.env.process(self.proceso_reposicion(self.pepperoni))
+                        if not self.en_reposicion[self.pepperoni]:
+                            if self.logs:
+                                self.log(f'{self.env.now}: No hay suficiente pepperoni para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')
+                            yield self.env.process(self.proceso_reposicion(self.pepperoni))
+                        else:
+                            if self.logs:
+                                self.log(f'{self.env.now}: Esperando reposición de pepperoni para la pizza {num_pizza} del cliente {cliente}.')
+                            yield self.evento_inventario_repuesto[self.pepperoni]
+                            if self.logs:
+                                self.log(f'{self.env.now}: Reposición de pepperoni completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
                     # Agregamos pepperoni
                     gamma_3 = self.rng.lognormal(mean=0.5, sigma=0.25)/60
                     yield self.env.timeout(gamma_3) # Esperamos a que se ponga el pepperoni
@@ -502,9 +523,16 @@ class Pizzeria:
                     # Vemos cuanta carne se añadirá
                     xi_4 = self.rng.binomial(n = 16, p = 0.42)
                     if xi_4 > self.mix_carnes.level:
-                        if self.logs:
-                            self.log(f'{self.env.now}: No hay suficiente mix de carnes para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')
-                        yield self.env.process(self.proceso_reposicion(self.mix_carnes))
+                        if not self.en_reposicion[self.mix_carnes]:
+                            if self.logs:
+                                self.log(f'{self.env.now}: No hay suficiente mix de carnes para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')
+                            yield self.env.process(self.proceso_reposicion(self.mix_carnes))
+                        else:
+                            if self.logs:
+                                self.log(f'{self.env.now}: Esperando reposición de mix de carnes para la pizza {num_pizza} del cliente {cliente}.')
+                            yield self.evento_inventario_repuesto[self.mix_carnes]
+                            if self.logs:
+                                self.log(f'{self.env.now}: Reposición de mix de carnes completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
                     # Agregamos mix
                     gamma_4 = self.rng.uniform(low = 1, high = 1.8)/60
                     yield self.env.timeout(gamma_4) # Esperamos a que se ponga el mix
@@ -608,7 +636,7 @@ class Pizzeria:
                 self.log(f'{self.env.now}: Llega el repartidor del cliente {cliente} al local.')
                 
 
-    def revisar_inventario_salsa(self):
+    def temporizador_revision_salsa(self):
         yield self.env.timeout(10) # Iniciar simulación a las 10 AM 
         
         while True:
@@ -617,15 +645,25 @@ class Pizzeria:
             yield self.env.timeout(0.5) # Revisamos cada 30 minutos
             if self.env.now >= self.tiempo_limite:
                 break
+                
+            if self.logs:
+                self.log(f'{self.env.now}: Revisión periódica de inventario de salsa de tomate.')
+
+            self.env.process(self.revisar_inventario_salsa())
+    
+    def revisar_inventario_salsa(self):
             if self.trabajadores.count < self.cantidad_trabajadores:
                 with self.trabajadores.request() as trabajador_request:
                     yield trabajador_request
                     if self.salsa_de_tomate.level < self.umbral_reposicion[self.salsa_de_tomate] and not self.en_reposicion[self.salsa_de_tomate]:
                         if self.logs:
                             self.log(f'{self.env.now}: Nivel de salsa de tomate bajo ({self.salsa_de_tomate.level} ml). Iniciando reposición.')
-                        self.env.process(self.proceso_reposicion(self.salsa_de_tomate))
+                        yield self.env.process(self.proceso_reposicion(self.salsa_de_tomate))
+            else: 
+                if self.logs:
+                    self.log(f'{self.env.now}: No hay trabajadores disponibles para revisar inventario de salsa de tomate, se omite esta revisión.')
 
-    def revisar_inventarios(self):
+    def temporizador_revision_inventarios(self):
         yield self.env.timeout(10) # Iniciar simulación a las 10 AM
 
         while True:
@@ -636,6 +674,9 @@ class Pizzeria:
                 break
             if self.logs:
                 self.log(f'{self.env.now}: Revisión periódica de inventarios.')
+            self.env.process(self.revisar_inventarios())
+
+    def revisar_inventarios(self):
             if self.trabajadores.count < self.cantidad_trabajadores:
                 with self.trabajadores.request() as trabajador_request:
                     yield trabajador_request
@@ -654,11 +695,21 @@ class Pizzeria:
                     self.log(f'{self.env.now}: No hay trabajadores disponibles para revisar inventarios, se omite esta revisión.')
 
     def proceso_reposicion(self, inventario):
+        if self.logs:
+            self.log(f'{self.env.now}: Iniciando proceso de reposición para {self.nombres_inventarios[inventario]}.')
         cantidad_a_reponer = inventario.capacity - inventario.level
+        if self.logs:
+            self.log(f'{self.env.now}: Cantidad a reponer de {self.nombres_inventarios[inventario]}: {cantidad_a_reponer} unidades.')
         tiempo_reposicion = self.obtener_tiempo_reposicion(inventario)
+        if self.logs:
+            self.log(f'{self.env.now}: Tiempo estimado de reposición para {self.nombres_inventarios[inventario]}: {tiempo_reposicion} horas.')
         self.en_reposicion[inventario] = True
         yield self.env.timeout(tiempo_reposicion)
         yield inventario.put(cantidad_a_reponer)
+        self.evento_inventario_repuesto[inventario].succeed()
+        self.evento_inventario_repuesto[inventario] = self.env.event()
+        if self.logs:
+            self.log(f'{self.env.now}: Reposición de {self.nombres_inventarios[inventario]} completada. Nuevo nivel: {inventario.level} unidades.')
 
         self.en_reposicion[inventario] = False
     
