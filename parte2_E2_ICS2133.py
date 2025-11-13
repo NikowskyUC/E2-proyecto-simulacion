@@ -20,6 +20,17 @@ promedios_resultados_metricas = {
     'Utilidad': 0
 }
 
+promedios_validacion_metricas = {
+    'Proporcion Llamadas Perdidas': 0,
+    'Proporcion Pedidos Tardíos': 0,
+    'Proporcion Tardíos Normal': 0,
+    'Proporcion Tardíos Premium': 0,
+    'Tiempo Medio para Procesar un Pedido (min)': 0,
+    'Tiempo Medio para Procesar un Pedido Normal (min)': 0,
+    'Tiempo Medio para Procesar un Pedido Premium (min)': 0,
+    'Utilidad': 0
+}
+
 def mann_whitney_test(sim, real, nombre):
 
     stat, p = st.mannwhitneyu(sim, real, alternative="two-sided")
@@ -113,4 +124,8 @@ for nombre in titulos_metricas:
 
     # Recolectamos los datos de todas las replicas promedio por si nos sirve de algo en un futuro :)
     promedios_resultados_metricas[nombre] = round(float(np.mean(reales)), 2)
+    promedios_validacion_metricas[nombre] = round(float(np.mean(validacion)), 2)
 
+    print(f"Promedio métrica '{nombre}' en simulación: {promedios_resultados_metricas[nombre]}")
+    print(f"Promedio métrica '{nombre}' en validación: {promedios_validacion_metricas[nombre]}\n")
+    

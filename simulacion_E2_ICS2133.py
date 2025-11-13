@@ -2,8 +2,9 @@ import numpy as np
 import simpy as sp
 import math
 
-logs = False
-tiempo_simulacion = 168 # horas
+logs = True
+tiempo_simulacion = 24 # horas
+numero_replicas = 1
 
 class Pizzeria:
 
@@ -445,6 +446,9 @@ class Pizzeria:
         elif tipo_pizza==3:
             self.pizzas_carnes += 1
         
+        if self.logs:
+            self.log(f'{self.env.now}: Solicitando estacion de preparacion para la pizza {num_pizza} del cliente {cliente}')
+
         with self.estacion_preparacion.request(priority=prioridad) as estacion_request:
             yield estacion_request
 
@@ -490,7 +494,8 @@ class Pizzeria:
                     gamma_3 = self.rng.lognormal(mean=0.5, sigma=0.25)/60
                     yield self.env.timeout(gamma_3) # Esperamos a que se ponga el pepperoni
                     # Descontamos pepperoni
-                    yield self.pepperoni.get(xi_3)
+                    if xi_3 > 0:
+                        yield self.pepperoni.get(xi_3)
                     
                 # Agregamos Mix
                 if tipo_pizza==3:
@@ -504,7 +509,8 @@ class Pizzeria:
                     gamma_4 = self.rng.uniform(low = 1, high = 1.8)/60
                     yield self.env.timeout(gamma_4) # Esperamos a que se ponga el mix
                     # Descontamos Mix
-                    yield self.mix_carnes.get(xi_4)
+                    if xi_4 > 0:
+                        yield self.mix_carnes.get(xi_4)
         if self.logs:
             self.log(f'{self.env.now}: Se terminó de preparar la pizza {num_pizza} del cliente {cliente}, solicitando horno...')
         # Procedemos a hornear la pizza
@@ -727,7 +733,7 @@ def replicas_simulación(iteraciones, tiempo_horas):
         np.random.seed(i)
         env = sp.Environment()
         pizzeria = Pizzeria(env)
-        pizzeria.iniciar_simulacion(tiempo_horas, i, logs=False)
+        pizzeria.iniciar_simulacion(tiempo_horas, i, logs=logs)
         lista_resultados.append(pizzeria.obtener_metricas())
 
         print(f'Replica {i+1} completada.')
@@ -742,7 +748,19 @@ def replicas_simulación(iteraciones, tiempo_horas):
             
 
 if __name__ == "__main__":
-    resultados = replicas_simulación(10, tiempo_simulacion)
+    for i in range(numero_replicas):
+        env = sp.Environment()
+        pizzeria = Pizzeria(env)
+        pizzeria.iniciar_simulacion(tiempo_simulacion, i, logs=logs)
+
+        print(f'Replica {i+1} completada.')
+        print()
+        print(pizzeria.obtener_metricas())
+
+        print("")
+        print("--------------------------------")
+        print("")
+
 
 
     
