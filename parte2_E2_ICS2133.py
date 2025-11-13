@@ -46,19 +46,21 @@ def mann_whitney_test(sim, real, nombre):
 
     print()
 
-def ks_test(sim, real, nombre):
-
-    stat, p = st.ks_2samp(sim, real, alternative="two-sided")
-
-    print(f"Métrica: {nombre} (KS)")
-    print(f"Estadístico D: {stat:.4f}")
-    print(f"Valor-p: {p:.5f}")
-
-    if p > (1 - ALPHA):
-        print(f"Los datos son válidos con un nivel de confianza del {1 - ALPHA}")
+def intervalo_t_pareado(sim, real, nombre):
+    n=len(sim)
+    z = sim-real
+    z_mean = np.mean(z)
+    z_var = np.var(z)
+    intervalo=[z_mean-st.t.ppf(1 - ALPHA / 2, df=n - 1)*np.sqrt(z_var/n),z_mean+st.t.ppf(1 - ALPHA / 2, df=n - 1)*np.sqrt(z_var/n)]
+    
+    print(f"Métrica: {nombre}")
+    print(f"Media muestras: {np.mean(sim)}")
+    print(f"Intervalo al {ALPHA} de confianza: [{intervalo[0]},{intervalo[1]}]")
+    if intervalo[0]<=0 and 0<= intervalo[1]:
+        print('La diferencia no es significativa')
     else:
-        print(f"Los datos no son válidos con el nivel de confianza de {1 - ALPHA}")
-    print()
+        print('La diferencia es significativa. Las muestras son diferentes')
+    return intervalo
 
 
 # Leemos los datos que nos entregan 
@@ -117,8 +119,8 @@ for nombre in titulos_metricas:
     print()
 
     print(f"=== Métrica: {nombre} ===")
-    print("Prueba de KS:")
-    ks_test(reales, validacion, nombre)
+    print("Prueba de t pareado:")
+    intervalo_t_pareado(reales, validacion, nombre)
     print()
     print()
 
