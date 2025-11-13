@@ -944,6 +944,8 @@ if __name__ == "__main__":
         print(f'Replica {i+1} completada.')
         print()
         print(pizzeria.obtener_metricas())
+        if logs:
+            pizzeria.generar_reporte_logs(f'reporte_logs_replica_{i+1}.txt')
 
         print("")
         print("--------------------------------")
