@@ -63,7 +63,7 @@ class Pizzeria:
         self.costo_hora_trabajador = 4000
         self.costo_hora_repartidor = 3000
 
-        self.costo_fijo_lineas_telefonicas = 50000 # semanal
+        self.costo_fijo_lineas_telefonicas = 50000 * 3 # semanal
         self.costo_fijo_espacio_preparacion = 60000 # semanal
         self.costo_fijo_horno = 40000 # semanal
         self.costo_fijo_embalaje = 30000 # semanal
@@ -198,7 +198,7 @@ class Pizzeria:
         for dia, hora_fin in self.ultima_hora_fin_por_dia.items():
             es_finde = (dia % 7) in [5, 6]
             if es_finde and 10 > hora_fin > 1:
-                self.horas_extras += hora_fin
+                self.horas_extras += hora_fin - 1
             elif (not es_finde) and (hora_fin > 23 or hora_fin < 10):
                 self.horas_extras += (hora_fin - 23) if hora_fin > 23 else (hora_fin + 1)
 
@@ -280,6 +280,11 @@ class Pizzeria:
             else:
                 tasa = self.tasas_finde[hora_del_dia] # Tomar tasa correspondiente a la hora actual
                 tiempo_proxima_llamada = self.rng.exponential(1 / tasa) 
+                if hora_y_minuto_del_dia + tiempo_proxima_llamada > 24:
+                    # Se avanza el tiempo al dia siguiente las 10 hrs
+                    tiempo_para_dia_siguiente = 24 - hora_y_minuto_del_dia + 10
+                    dia_siguiente = now + tiempo_para_dia_siguiente
+                    tiempo_proxima_llamada = tiempo_para_dia_siguiente + self.obtener_tiempo_proxima_llamada(dia_siguiente)
                 
         else: # Dia normal
             if hora_del_dia < 10:
@@ -298,6 +303,11 @@ class Pizzeria:
             else:
                 tasa = self.tasas_dia_normal[hora_del_dia] # Tomar tasa correspondiente a la hora actual
                 tiempo_proxima_llamada = self.rng.exponential(1 / tasa)
+                if hora_y_minuto_del_dia + tiempo_proxima_llamada > 22:
+                    # Se avanza el tiempo al dia siguiente las 10 hrs
+                    tiempo_para_dia_siguiente = 24 - hora_y_minuto_del_dia + 10
+                    dia_siguiente = now + tiempo_para_dia_siguiente
+                    tiempo_proxima_llamada = tiempo_para_dia_siguiente + self.obtener_tiempo_proxima_llamada(dia_siguiente)
 
         return tiempo_proxima_llamada # unidades en horas
 
@@ -360,7 +370,7 @@ class Pizzeria:
                 # Rechazamos la llamada
                 self.llamadas_perdidas += 1
                 if self.logs:
-                    self.log(f'{self.env.now}: No hay lineas disponibles. Cliente {cliente} es rechazado')
+                    self.log(f'{self.env.now}: No hay líneas disponibles. Cliente {cliente} es rechazado')
 
                 
         
@@ -450,7 +460,7 @@ class Pizzeria:
             self.pizzas_carnes += 1
         
         if self.logs:
-            self.log(f'{self.env.now}: Solicitando estacion de preparacion para la pizza {num_pizza} del cliente {cliente}')
+            self.log(f'{self.env.now}: Solicitando estación de preparación para la pizza {num_pizza} del cliente {cliente}')
 
         with self.estacion_preparacion.request(priority=prioridad) as estacion_request:
             yield estacion_request
@@ -721,16 +731,16 @@ class Pizzeria:
                         return tiempo_hasta_fin_dia + 10.5
     
     def revisar_inventario_salsa(self):
-            if self.trabajadores.count < self.cantidad_trabajadores:
-                with self.trabajadores.request() as trabajador_request:
-                    yield trabajador_request
-                    if self.salsa_de_tomate.level < self.umbral_reposicion[self.salsa_de_tomate] and not self.en_reposicion[self.salsa_de_tomate]:
-                        if self.logs:
-                            self.log(f'{self.env.now}: Nivel de salsa de tomate bajo ({self.salsa_de_tomate.level} ml). Iniciando reposición.')
-                        yield self.env.process(self.proceso_reposicion(self.salsa_de_tomate))
-            else: 
-                if self.logs:
-                    self.log(f'{self.env.now}: No hay trabajadores disponibles para revisar inventario de salsa de tomate, se omite esta revisión.')
+        if self.trabajadores.count < self.cantidad_trabajadores:
+            with self.trabajadores.request() as trabajador_request:
+                yield trabajador_request
+                if self.salsa_de_tomate.level < self.umbral_reposicion[self.salsa_de_tomate] and not self.en_reposicion[self.salsa_de_tomate]:
+                    if self.logs:
+                        self.log(f'{self.env.now}: Nivel de salsa de tomate bajo ({self.salsa_de_tomate.level} ml). Iniciando reposición.')
+                    yield self.env.process(self.proceso_reposicion(self.salsa_de_tomate))
+        else: 
+            if self.logs:
+                self.log(f'{self.env.now}: No hay trabajadores disponibles para revisar inventario de salsa de tomate, se omite esta revisión.')
 
     def temporizador_revision_inventarios(self):
         yield self.env.timeout(10) # Iniciar simulación a las 10 AM
@@ -815,22 +825,22 @@ class Pizzeria:
         
 
     def revisar_inventarios(self):
-            if self.trabajadores.count < self.cantidad_trabajadores:
-                with self.trabajadores.request() as trabajador_request:
-                    yield trabajador_request
-                    for inventario in self.inventarios:
-                        if inventario == self.salsa_de_tomate:
-                            continue  # La salsa de tomate se revisa en otro proceso
-                        if inventario.level < self.umbral_reposicion[inventario] and not self.en_reposicion[inventario]:
-                            if self.logs:
-                                self.log(f'{self.env.now}: Nivel de {self.nombres_inventarios[inventario]} bajo ({inventario.level}). Iniciando reposición.')
-                            yield self.env.process(self.proceso_reposicion(inventario))
-                        else:
-                            if self.logs:
-                                self.log(f'{self.env.now}: Nivel de {self.nombres_inventarios[inventario]} suficiente ({inventario.level}). No se requiere reposición.')
-            else:
-                if self.logs:
-                    self.log(f'{self.env.now}: No hay trabajadores disponibles para revisar inventarios, se omite esta revisión.')
+        if self.trabajadores.count < self.cantidad_trabajadores:
+            with self.trabajadores.request() as trabajador_request:
+                yield trabajador_request
+                for inventario in self.inventarios:
+                    if inventario == self.salsa_de_tomate:
+                        continue  # La salsa de tomate se revisa en otro proceso
+                    if inventario.level < self.umbral_reposicion[inventario] and not self.en_reposicion[inventario]:
+                        if self.logs:
+                            self.log(f'{self.env.now}: Nivel de {self.nombres_inventarios[inventario]} bajo ({inventario.level}). Iniciando reposición.')
+                        yield self.env.process(self.proceso_reposicion(inventario))
+                    else:
+                        if self.logs:
+                            self.log(f'{self.env.now}: Nivel de {self.nombres_inventarios[inventario]} suficiente ({inventario.level}). No se requiere reposición.')
+        else:
+            if self.logs:
+                self.log(f'{self.env.now}: No hay trabajadores disponibles para revisar inventarios, se omite esta revisión.')
 
     def proceso_reposicion(self, inventario):
         if self.logs:
