@@ -32,10 +32,13 @@ class Pizzeria:
         self.repartidores = sp.PriorityResource(env, capacity=self.cantidad_repartidores)
 
         # Inventarios
-        self.salsa_de_tomate = sp.Container(env, init=15000, capacity=15000) # en ml
-        self.queso_mozzarella = sp.Container(env, init=1000, capacity=1000) # en unidades
-        self.pepperoni = sp.Container(env, init=800, capacity=800) # en unidades
-        self.mix_carnes = sp.Container(env, init=600, capacity=600) # en unidades
+        # NOTA: Conceptualmente salsa es continua (ml) y los demás son discretos (unidades)
+        # Sin embargo, usamos Container para todos por eficiencia de simulación
+        # Al reponer inventarios discretos, redondeamos la cantidad
+        self.salsa_de_tomate = sp.Container(env, init=15000, capacity=15000) # continuo: ml
+        self.queso_mozzarella = sp.Container(env, init=1000, capacity=1000) # discreto: unidades
+        self.pepperoni = sp.Container(env, init=800, capacity=800) # discreto: unidades  
+        self.mix_carnes = sp.Container(env, init=600, capacity=600) # discreto: unidades
 
         self.inventarios = [self.salsa_de_tomate, self.queso_mozzarella,
                        self.pepperoni, self.mix_carnes]
@@ -48,6 +51,9 @@ class Pizzeria:
                                   self.queso_mozzarella: 200,
                                   self.pepperoni: 300,
                                   self.mix_carnes: 100}
+        
+        # Inventarios que son conceptualmente discretos (para redondear en reposición)
+        self.inventarios_discretos = {self.queso_mozzarella, self.pepperoni, self.mix_carnes}
 
         # Ingresos
         self.precio_pizza_queso = 7000
@@ -258,8 +264,20 @@ class Pizzeria:
         }
     
     def log(self, mensaje):
-        print(mensaje)
-        self.log_data += mensaje + '\n'
+        time = self.timestamp()
+        print(f'{time}: {mensaje}')
+        self.log_data += f'{time}: {mensaje}\n'
+    
+    def timestamp(self):
+        horas_totales = int(self.env.now)
+        dias = horas_totales // 24 + 1
+        horas = horas_totales % 24
+        minutos = int((self.env.now - horas_totales) * 60)
+        return f'Día {dias}, {horas:02d}:{minutos:02d}'
+    
+    def obtener_nivel_inventario(self, inventario):
+        """Obtiene el nivel actual del inventario (continuo o discreto)"""
+        return inventario.level  # Todos usan Container ahora
 
     
     def obtener_tiempo_proxima_llamada(self, now): # retorna tiempo en horas
@@ -320,20 +338,20 @@ class Pizzeria:
             # Verificar si ya alcanzamos el tiempo límite ANTES de esperar
             if self.env.now >= self.tiempo_limite:
                 if self.logs:
-                    self.log(f'{self.env.now}: Se ha alcanzado el tiempo límite de la simulación. No se aceptan más llamadas.')
+                    self.log(f'Se ha alcanzado el tiempo límite de la simulación. No se aceptan más llamadas.')
                 # Esperar a que todos los pedidos activos terminen
                 if self.pedidos_activos:
                     pedidos_pendientes = [p for p in self.pedidos_activos if not p.triggered]
                     if pedidos_pendientes:
                         if self.logs:
-                            self.log(f'{self.env.now}: Esperando a que terminen {len(pedidos_pendientes)} pedidos activos...')
+                            self.log(f'Esperando a que terminen {len(pedidos_pendientes)} pedidos activos...')
                         try:
                             yield sp.AllOf(self.env, pedidos_pendientes)
                             if self.logs:
-                                self.log(f'{self.env.now}: Todos los pedidos activos han terminado.')
+                                self.log(f'Todos los pedidos activos han terminado.')
                         except:
                             if self.logs:
-                                self.log(f'{self.env.now}: No hay más eventos, asumiendo que pedidos terminaron.')
+                                self.log(f'No hay más eventos, asumiendo que pedidos terminaron.')
                 if not self.evento_termino_simulacion.triggered:
                     self.evento_termino_simulacion.succeed()
                 break
@@ -342,7 +360,7 @@ class Pizzeria:
             tiempo_proxima_llamada = self.obtener_tiempo_proxima_llamada(self.env.now)
             if self.env.now + tiempo_proxima_llamada >= self.tiempo_limite:
                 if self.logs:
-                    self.log(f'{self.env.now}: La próxima llamada excede el tiempo límite de la simulación. Avanzando al tiempo límite.')
+                    self.log(f'La próxima llamada excede el tiempo límite de la simulación. Avanzando al tiempo límite.')
                 yield self.env.timeout(self.tiempo_limite - self.env.now)
                 continue
             else: 
@@ -354,7 +372,7 @@ class Pizzeria:
             
             
             if self.logs:
-                self.log(f'{self.env.now}: Cliente {cliente} intenta llamar')
+                self.log(f'Cliente {cliente} intenta llamar')
 
             
 
@@ -364,13 +382,13 @@ class Pizzeria:
                 pedido = self.env.process(self.atender_llamada(cliente))
                 self.pedidos_activos.append(pedido)
                 if self.logs:
-                    self.log(f'{self.env.now}: Cliente {cliente} es atendido por teléfono')
+                    self.log(f'Cliente {cliente} es atendido por teléfono')
 
             else:
                 # Rechazamos la llamada
                 self.llamadas_perdidas += 1
                 if self.logs:
-                    self.log(f'{self.env.now}: No hay líneas disponibles. Cliente {cliente} es rechazado')
+                    self.log(f'No hay líneas disponibles. Cliente {cliente} es rechazado')
 
                 
         
@@ -381,12 +399,12 @@ class Pizzeria:
             self.pedidos_premium_totales += 1
             prioridad = 1
             if self.logs:
-                self.log(f'{self.env.now}: Cliente {cliente} es premium')
+                self.log(f'Cliente {cliente} es premium')
         else:
             self.pedidos_normales_totales += 1
             prioridad = 2
             if self.logs:
-                self.log(f'{self.env.now}: Cliente {cliente} es común')
+                self.log(f'Cliente {cliente} es común')
 
         # Generamos el tiempo que toma la atención por teléfono.
         beta = self.rng.gamma(shape=4, scale=0.5, size=1)/60    
@@ -394,7 +412,7 @@ class Pizzeria:
             yield self.env.timeout(beta) # Esperamos
         
         if self.logs:
-            self.log(f'{self.env.now}: Se terminó de anteder al cliente {cliente} por teléfono')
+            self.log(f'Se terminó de anteder al cliente {cliente} por teléfono')
         # Empezamos a medir el tiempo de la orden
         inicio_tiempo_orden = self.env.now
         
@@ -405,7 +423,7 @@ class Pizzeria:
         else:
             cantidad_pizzas_a_preparar = self.rng.choice(a=[1,2,3,4], p=[0.6, 0.2, 0.15, 0.05])
         if self.logs: 
-            self.log(f'{self.env.now}: Cliente {cliente} ordena {cantidad_pizzas_a_preparar} pizzas')
+            self.log(f'Cliente {cliente} ordena {cantidad_pizzas_a_preparar} pizzas')
         # Tipo de pizza a preparar:
         # 1. Queso
         # 2. Pepperoni
@@ -416,12 +434,12 @@ class Pizzeria:
                 tipo_pizza = self.rng.choice(a=[1,2,3], p=[0.3,0.6,0.1])
                 tipos_pizzas.append(tipo_pizza)
                 if self.logs:
-                    self.log(f'{self.env.now}: Pizza {i+1} del cliente {cliente} es tipo {tipo_pizza}')
+                    self.log(f'Pizza {i+1} del cliente {cliente} es tipo {tipo_pizza}')
             else:
                 tipo_pizza = self.rng.choice(a=[1,2,3], p=[0.1,0.4,0.5])
                 tipos_pizzas.append(tipo_pizza)
                 if self.logs:
-                    self.log(f'{self.env.now}: Pizza {i+1} del cliente {cliente} es tipo {tipo_pizza}')
+                    self.log(f'Pizza {i+1} del cliente {cliente} es tipo {tipo_pizza}')
             
             
         # Procedemos a preparar la pizza y calcular el valor de la orden
@@ -440,7 +458,7 @@ class Pizzeria:
         # Esperamos a que todas las pizzas estén listas (preparadas, cocinadas y embaladas) para proceder al despacho.
         yield sp.AllOf(self.env, lista_de_procesos_pizzas)
         if self.logs:
-            self.log(f'{self.env.now}: Todas las pizzas del cliente {cliente} están listas. Se procede al despacho')
+            self.log(f'Todas las pizzas del cliente {cliente} están listas. Se procede al despacho')
         
         
         yield self.env.process(self.despacho(cliente, premium, prioridad, inicio_tiempo_orden, valor_orden))
@@ -460,7 +478,7 @@ class Pizzeria:
             self.pizzas_carnes += 1
         
         if self.logs:
-            self.log(f'{self.env.now}: Solicitando estación de preparación para la pizza {num_pizza} del cliente {cliente}')
+            self.log(f'Solicitando estación de preparación para la pizza {num_pizza} del cliente {cliente}')
 
         with self.estacion_preparacion.request(priority=prioridad) as estacion_request:
             yield estacion_request
@@ -469,38 +487,38 @@ class Pizzeria:
                 yield trabajador_request
 
                 if self.logs:
-                    self.log(f'{self.env.now}: Se comienza a preparar la pizza {num_pizza} del cliente {cliente}')
+                    self.log(f'Se comienza a preparar la pizza {num_pizza} del cliente {cliente}')
 
-                # Vemos cuanta salsa se añadirá
+                # Vemos cuanta salsa se añadirá (continua)
                 xi_1 = self.rng.exponential(scale = 250)
-                if xi_1 > self.salsa_de_tomate.level:
+                if xi_1 > self.obtener_nivel_inventario(self.salsa_de_tomate):
                     if not self.en_reposicion[self.salsa_de_tomate]:
                         if self.logs:
-                            self.log(f'{self.env.now}: No hay suficiente salsa de tomate para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')
+                            self.log(f'No hay suficiente salsa de tomate para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')
                         yield self.env.process(self.proceso_reposicion(self.salsa_de_tomate))
                     else: 
                         if self.logs:
-                            self.log(f'{self.env.now}: Esperando reposición de salsa de tomate para la pizza {num_pizza} del cliente {cliente}.')
+                            self.log(f'Esperando reposición de salsa de tomate para la pizza {num_pizza} del cliente {cliente}.')
                         yield self.evento_inventario_repuesto[self.salsa_de_tomate]
                 # Agregamos Salsa
                 gamma_1 = self.rng.beta(a = 5, b = 2.2)/60
                 yield self.env.timeout(gamma_1) # Esperamos a que se ponga la salsa
-                # Descontamos la salsa
+                # Descontamos la salsa (continuo)
                 yield self.salsa_de_tomate.get(xi_1)
                 
-                # Vemos cuanto queso se añadirá
+                # Vemos cuanto queso se añadirá (discreto)
                 xi_2 = self.rng.negative_binomial(n = 25, p = 0.52)
-                if xi_2 > self.queso_mozzarella.level:
+                if xi_2 > self.obtener_nivel_inventario(self.queso_mozzarella):
                     if not self.en_reposicion[self.queso_mozzarella]:
                         if self.logs:
-                            self.log(f'{self.env.now}: No hay suficiente queso mozzarella para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')  
+                            self.log(f'No hay suficiente queso mozzarella para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')  
                         yield self.env.process(self.proceso_reposicion(self.queso_mozzarella))
                     else:
                         if self.logs:
-                            self.log(f'{self.env.now}: Esperando reposición de queso mozzarella para la pizza {num_pizza} del cliente {cliente}.')
+                            self.log(f'Esperando reposición de queso mozzarella para la pizza {num_pizza} del cliente {cliente}.')
                         yield self.evento_inventario_repuesto[self.queso_mozzarella]
                         if self.logs:
-                            self.log(f'{self.env.now}: Reposición de queso mozzarella completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
+                            self.log(f'Reposición de queso mozzarella completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
                 # Agregamos queso
                 gamma_2 = self.rng.triangular(left = 0.9, mode = 1, right = 1.2)/60
                 yield self.env.timeout(gamma_2) # Esperamos a que se ponga el queso
@@ -509,19 +527,19 @@ class Pizzeria:
                 
                 # Agregamos Pepperoni si pizza es de pepperoni o mix de carnes
                 if tipo_pizza==2 or tipo_pizza==3:
-                    # Vemos cuanto pepperoni se añadirá
+                    # Vemos cuanto pepperoni se añadirá (discreto)
                     xi_3 = self.rng.poisson(lam = 20)
-                    if xi_3 > self.pepperoni.level:
+                    if xi_3 > self.obtener_nivel_inventario(self.pepperoni):
                         if not self.en_reposicion[self.pepperoni]:
                             if self.logs:
-                                self.log(f'{self.env.now}: No hay suficiente pepperoni para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')
+                                self.log(f'No hay suficiente pepperoni para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')
                             yield self.env.process(self.proceso_reposicion(self.pepperoni))
                         else:
                             if self.logs:
-                                self.log(f'{self.env.now}: Esperando reposición de pepperoni para la pizza {num_pizza} del cliente {cliente}.')
+                                self.log(f'Esperando reposición de pepperoni para la pizza {num_pizza} del cliente {cliente}.')
                             yield self.evento_inventario_repuesto[self.pepperoni]
                             if self.logs:
-                                self.log(f'{self.env.now}: Reposición de pepperoni completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
+                                self.log(f'Reposición de pepperoni completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
                     # Agregamos pepperoni
                     gamma_3 = self.rng.lognormal(mean=0.5, sigma=0.25)/60
                     yield self.env.timeout(gamma_3) # Esperamos a que se ponga el pepperoni
@@ -531,19 +549,19 @@ class Pizzeria:
                     
                 # Agregamos Mix
                 if tipo_pizza==3:
-                    # Vemos cuanta carne se añadirá
+                    # Vemos cuanta carne se añadirá (discreto)
                     xi_4 = self.rng.binomial(n = 16, p = 0.42)
-                    if xi_4 > self.mix_carnes.level:
+                    if xi_4 > self.obtener_nivel_inventario(self.mix_carnes):
                         if not self.en_reposicion[self.mix_carnes]:
                             if self.logs:
-                                self.log(f'{self.env.now}: No hay suficiente mix de carnes para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')
+                                self.log(f'No hay suficiente mix de carnes para la pizza {num_pizza} del cliente {cliente}. Iniciando reposición.')
                             yield self.env.process(self.proceso_reposicion(self.mix_carnes))
                         else:
                             if self.logs:
-                                self.log(f'{self.env.now}: Esperando reposición de mix de carnes para la pizza {num_pizza} del cliente {cliente}.')
+                                self.log(f'Esperando reposición de mix de carnes para la pizza {num_pizza} del cliente {cliente}.')
                             yield self.evento_inventario_repuesto[self.mix_carnes]
                             if self.logs:
-                                self.log(f'{self.env.now}: Reposición de mix de carnes completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
+                                self.log(f'Reposición de mix de carnes completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
                     # Agregamos mix
                     gamma_4 = self.rng.uniform(low = 1, high = 1.8)/60
                     yield self.env.timeout(gamma_4) # Esperamos a que se ponga el mix
@@ -551,7 +569,7 @@ class Pizzeria:
                     if xi_4 > 0:
                         yield self.mix_carnes.get(xi_4)
         if self.logs:
-            self.log(f'{self.env.now}: Se terminó de preparar la pizza {num_pizza} del cliente {cliente}, solicitando horno...')
+            self.log(f'Se terminó de preparar la pizza {num_pizza} del cliente {cliente}, solicitando horno...')
         # Procedemos a hornear la pizza
         yield self.env.process(self.hornear(cliente, premium, prioridad, num_pizza))
         
@@ -560,11 +578,11 @@ class Pizzeria:
         with self.horno.request(priority=prioridad) as horno_request:
             yield horno_request
             if self.logs:
-                self.log(f'{self.env.now}: La pizza {num_pizza} del cliente {cliente} está en el horno.')
+                self.log(f'La pizza {num_pizza} del cliente {cliente} está en el horno.')
             delta = self.rng.lognormal(mean=2.5, sigma=0.2)/60
             yield self.env.timeout(delta)
             if self.logs:
-                self.log(f'{self.env.now}: La pizza {num_pizza} del cliente {cliente} salió del horno, solicitando embalaje.')
+                self.log(f'La pizza {num_pizza} del cliente {cliente} salió del horno, solicitando embalaje.')
         
         yield self.env.process(self.embalar(cliente, premium, prioridad, num_pizza))
             
@@ -576,11 +594,11 @@ class Pizzeria:
             with self.trabajadores.request(priority=prioridad) as trabajador_request:
                 yield trabajador_request
                 if self.logs:
-                    self.log(f'{self.env.now}: La pizza {num_pizza} del cliente {cliente} está siendo embalada.')
+                    self.log(f'La pizza {num_pizza} del cliente {cliente} está siendo embalada.')
                 epsilon = self.rng.triangular(left = 1.1, mode = 2, right = 2.3)/60
                 yield self.env.timeout(epsilon)
                 if self.logs:
-                    self.log(f'{self.env.now}: La pizza {num_pizza} del cliente {cliente} ha sido embalada.')
+                    self.log(f'La pizza {num_pizza} del cliente {cliente} ha sido embalada.')
                 
             
         
@@ -588,13 +606,13 @@ class Pizzeria:
         with self.repartidores.request(priority=prioridad) as repartidor_request:
             yield repartidor_request
             if self.logs:
-                self.log(f'{self.env.now}: El repartidor procede a llevar el pedido del cliente {cliente}.')
+                self.log(f'El repartidor procede a llevar el pedido del cliente {cliente}.')
             
             # Esperamos el tiempo que toma ir del local al domicilio.
             tiempo_local_domicilio = self.rng.gamma(shape = 7.5, scale = 0.9)/60
             yield self.env.timeout(tiempo_local_domicilio)
             if self.logs:
-                self.log(f'{self.env.now}: Llega el repartidor al domicilio del cliente {cliente}.')
+                self.log(f'Llega el repartidor al domicilio del cliente {cliente}.')
                 
             # Dejamos de medir tiempo de reposición
             fin_tiempo_orden = self.env.now
@@ -626,7 +644,7 @@ class Pizzeria:
                 if premium:
                     self.compensacion += 0.2 * valor_orden
                     if self.logs:
-                        self.log(f'{self.env.now}: El pedido del cliente {cliente} tuvo un retraso. Se aplica compensación de ${0.2*valor_orden}.')
+                        self.log(f'El pedido del cliente {cliente} tuvo un retraso. Se aplica compensación de ${0.2*valor_orden}.')
 
                 if premium and self.finde:
                     self.pedidos_tardios_premium_finde += 1
@@ -644,7 +662,7 @@ class Pizzeria:
             tiempo_domicilio_local = self.rng.gamma(shape = 7.5, scale = 0.9)/60
             yield self.env.timeout(tiempo_domicilio_local)
             if self.logs:
-                self.log(f'{self.env.now}: Llega el repartidor del cliente {cliente} al local.')
+                self.log(f'Llega el repartidor del cliente {cliente} al local.')
                 
 
     def temporizador_revision_salsa(self):
@@ -659,7 +677,7 @@ class Pizzeria:
                 break
                 
             if self.logs:
-                self.log(f'{self.env.now}: Revisión periódica de inventario de salsa de tomate.')
+                self.log(f'Revisión periódica de inventario de salsa de tomate.')
 
             self.env.process(self.revisar_inventario_salsa())
     
@@ -734,9 +752,10 @@ class Pizzeria:
         if self.trabajadores.count < self.cantidad_trabajadores:
             with self.trabajadores.request() as trabajador_request:
                 yield trabajador_request
-                if self.salsa_de_tomate.level < self.umbral_reposicion[self.salsa_de_tomate] and not self.en_reposicion[self.salsa_de_tomate]:
+                nivel_actual = self.obtener_nivel_inventario(self.salsa_de_tomate)
+                if nivel_actual < self.umbral_reposicion[self.salsa_de_tomate] and not self.en_reposicion[self.salsa_de_tomate]:
                     if self.logs:
-                        self.log(f'{self.env.now}: Nivel de salsa de tomate bajo ({self.salsa_de_tomate.level} ml). Iniciando reposición.')
+                        self.log(f'{self.env.now}: Nivel de salsa de tomate bajo ({nivel_actual} ml). Iniciando reposición.')
                     yield self.env.process(self.proceso_reposicion(self.salsa_de_tomate))
         else: 
             if self.logs:
@@ -753,7 +772,7 @@ class Pizzeria:
             if self.env.now >= self.tiempo_limite:
                 break
             if self.logs:
-                self.log(f'{self.env.now}: Revisión periódica de inventarios.')
+                self.log(f'Revisión periódica de inventarios.')
             self.env.process(self.revisar_inventarios())
     
     # Funcion solicitada a Github Copilot
@@ -831,33 +850,46 @@ class Pizzeria:
                 for inventario in self.inventarios:
                     if inventario == self.salsa_de_tomate:
                         continue  # La salsa de tomate se revisa en otro proceso
-                    if inventario.level < self.umbral_reposicion[inventario] and not self.en_reposicion[inventario]:
+                    nivel_actual = self.obtener_nivel_inventario(inventario)
+                    if nivel_actual < self.umbral_reposicion[inventario] and not self.en_reposicion[inventario]:
                         if self.logs:
-                            self.log(f'{self.env.now}: Nivel de {self.nombres_inventarios[inventario]} bajo ({inventario.level}). Iniciando reposición.')
+                            self.log(f'Nivel de {self.nombres_inventarios[inventario]} bajo ({nivel_actual}). Iniciando reposición.')
                         yield self.env.process(self.proceso_reposicion(inventario))
                     else:
                         if self.logs:
-                            self.log(f'{self.env.now}: Nivel de {self.nombres_inventarios[inventario]} suficiente ({inventario.level}). No se requiere reposición.')
+                            self.log(f'Nivel de {self.nombres_inventarios[inventario]} suficiente ({nivel_actual}). No se requiere reposición.')
         else:
             if self.logs:
-                self.log(f'{self.env.now}: No hay trabajadores disponibles para revisar inventarios, se omite esta revisión.')
+                self.log(f'No hay trabajadores disponibles para revisar inventarios, se omite esta revisión.')
 
     def proceso_reposicion(self, inventario):
         if self.logs:
-            self.log(f'{self.env.now}: Iniciando proceso de reposición para {self.nombres_inventarios[inventario]}.')
-        cantidad_a_reponer = inventario.capacity - inventario.level
+            self.log(f'Iniciando proceso de reposición para {self.nombres_inventarios[inventario]}.')
+        
+        nivel_actual = self.obtener_nivel_inventario(inventario)
+        capacidad = inventario.capacity
+        cantidad_a_reponer = capacidad - nivel_actual
+        
         if self.logs:
-            self.log(f'{self.env.now}: Cantidad a reponer de {self.nombres_inventarios[inventario]}: {cantidad_a_reponer} unidades.')
+            self.log(f'Cantidad a reponer de {self.nombres_inventarios[inventario]}: {cantidad_a_reponer} unidades.')
         tiempo_reposicion = self.obtener_tiempo_reposicion(inventario)
         if self.logs:
-            self.log(f'{self.env.now}: Tiempo estimado de reposición para {self.nombres_inventarios[inventario]}: {tiempo_reposicion} horas.')
+            self.log(f'Tiempo estimado de reposición para {self.nombres_inventarios[inventario]}: {tiempo_reposicion} horas.')
         self.en_reposicion[inventario] = True
         yield self.env.timeout(tiempo_reposicion)
+        
+        # Redondear cantidad si es inventario discreto
+        if inventario in self.inventarios_discretos:
+            cantidad_a_reponer = round(cantidad_a_reponer)
+        
         yield inventario.put(cantidad_a_reponer)
+        
         self.evento_inventario_repuesto[inventario].succeed()
         self.evento_inventario_repuesto[inventario] = self.env.event()
+        
+        nivel_nuevo = self.obtener_nivel_inventario(inventario)
         if self.logs:
-            self.log(f'{self.env.now}: Reposición de {self.nombres_inventarios[inventario]} completada. Nuevo nivel: {inventario.level} unidades.')
+            self.log(f'Reposición de {self.nombres_inventarios[inventario]} completada. Nuevo nivel: {nivel_nuevo} unidades.')
 
         self.en_reposicion[inventario] = False
     
@@ -932,7 +964,7 @@ def replicas_simulación(iteraciones, tiempo_horas):
         np.random.seed(i)
         env = sp.Environment()
         pizzeria = Pizzeria(env)
-        pizzeria.iniciar_simulacion(tiempo_horas, i, logs=logs)
+        pizzeria.iniciar_simulacion(tiempo_horas, i, logs=False)
         lista_resultados.append(pizzeria.obtener_metricas())
 
         print(f'Replica {i+1} completada.')

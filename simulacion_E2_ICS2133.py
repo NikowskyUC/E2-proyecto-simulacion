@@ -922,7 +922,7 @@ def replicas_simulación(iteraciones, tiempo_horas):
         np.random.seed(i)
         env = sp.Environment()
         pizzeria = Pizzeria(env)
-        pizzeria.iniciar_simulacion(tiempo_horas, i, logs=logs)
+        pizzeria.iniciar_simulacion(tiempo_horas, i, logs=False)
         lista_resultados.append(pizzeria.obtener_metricas())
 
         print(f'Replica {i+1} completada.')
