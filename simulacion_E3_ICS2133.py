@@ -70,9 +70,9 @@ class Pizzeria:
         self.costo_hora_repartidor = 3000
 
         self.costo_fijo_lineas_telefonicas = 50000 * 3 # semanal
-        self.costo_fijo_espacio_preparacion = 60000 # semanal
-        self.costo_fijo_horno = 40000 # semanal
-        self.costo_fijo_embalaje = 30000 # semanal
+        self.costo_fijo_espacio_preparacion = 60000 * 3# semanal
+        self.costo_fijo_horno = 40000 * 10 # semanal
+        self.costo_fijo_embalaje = 30000 * 3 # semanal
         self.costos_fijos_semanales = (self.costo_fijo_lineas_telefonicas +
                                      self.costo_fijo_espacio_preparacion +
                                      self.costo_fijo_horno +
