@@ -1,6 +1,7 @@
 import numpy as np
 import simpy as sp
 import math
+from scipy.stats import norm, gamma as gamma_dist, triang, nbinom
 
 logs = True
 tiempo_simulacion = 168 # horas
@@ -162,12 +163,28 @@ class Pizzeria:
         self.utilidad = self.ingresos - self.costos
 
     
-    def iniciar_simulacion(self, tiempo_horas, seed, logs=False):
+    def iniciar_simulacion(self, tiempo_horas, seed, logs=False, uniformes_coccion=None, uniformes_despacho_ida=None, uniformes_despacho_vuelta=None, uniformes_llamada=None, uniformes_cantidad_queso=None, uniformes_tiempo_queso=None):
         self.tiempo_limite = tiempo_horas + 10 # Se suma 10 para iniciar simulacion a las 10 AM
         self.logs = logs
         self.log_data = ''
 
         self.rng = np.random.default_rng(seed)
+        
+        # Variables antitéticas: listas de números uniformes pre-generados
+        self.uniformes_coccion = uniformes_coccion if uniformes_coccion is not None else []
+        self.uniformes_despacho_ida = uniformes_despacho_ida if uniformes_despacho_ida is not None else []
+        self.uniformes_despacho_vuelta = uniformes_despacho_vuelta if uniformes_despacho_vuelta is not None else []
+        self.uniformes_llamada = uniformes_llamada if uniformes_llamada is not None else []
+        self.uniformes_cantidad_queso = uniformes_cantidad_queso if uniformes_cantidad_queso is not None else []
+        self.uniformes_tiempo_queso = uniformes_tiempo_queso if uniformes_tiempo_queso is not None else []
+        
+        # Contadores para indexar las variables antitéticas
+        self.idx_coccion = 0
+        self.idx_despacho_ida = 0
+        self.idx_despacho_vuelta = 0
+        self.idx_llamada = 0
+        self.idx_cantidad_queso = 0
+        self.idx_tiempo_queso = 0
 
         if self.logs:
             self.log(f'Iniciando simulación por {tiempo_horas} horas con semilla {seed}')
@@ -411,7 +428,17 @@ class Pizzeria:
                 self.log(f'Cliente {cliente} es común')
 
         # Generamos el tiempo que toma la atención por teléfono.
-        beta = self.rng.gamma(shape=4, scale=0.5, size=1)/60    
+        # Usar variable antitética si está disponible
+        if self.idx_llamada < len(self.uniformes_llamada):
+            u = self.uniformes_llamada[self.idx_llamada]
+            # Transformación inversa para gamma
+            beta = gamma_dist.ppf(u, a=4, scale=0.5) / 60
+        else:
+            beta = self.rng.gamma(shape=4, scale=0.5, size=1)/60
+        
+        # SIEMPRE incrementar el contador
+        self.idx_llamada += 1
+        
         with self.lineas_telefonicas.request() as linea:
             yield self.env.timeout(beta) # Esperamos
         
@@ -511,7 +538,17 @@ class Pizzeria:
                 yield self.salsa_de_tomate.get(xi_1)
                 
                 # Vemos cuanto queso se añadirá (discreto)
-                xi_2 = self.rng.negative_binomial(n = 25, p = 0.52)
+                # Usar variable antitética si está disponible
+                if self.idx_cantidad_queso < len(self.uniformes_cantidad_queso):
+                    u = self.uniformes_cantidad_queso[self.idx_cantidad_queso]
+                    # Transformación inversa para negative binomial
+                    xi_2 = int(nbinom.ppf(u, n=25, p=0.52))
+                else:
+                    xi_2 = self.rng.negative_binomial(n = 25, p = 0.52)
+                
+                # SIEMPRE incrementar el contador
+                self.idx_cantidad_queso += 1
+                
                 if xi_2 > self.obtener_nivel_inventario(self.queso_mozzarella):
                     if not self.en_reposicion[self.queso_mozzarella]:
                         if self.logs:
@@ -524,7 +561,20 @@ class Pizzeria:
                         if self.logs:
                             self.log(f'Reposición de queso mozzarella completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
                 # Agregamos queso
-                gamma_2 = self.rng.triangular(left = 0.9, mode = 1, right = 1.2)/60
+                # Usar variable antitética si está disponible
+                if self.idx_tiempo_queso < len(self.uniformes_tiempo_queso):
+                    u = self.uniformes_tiempo_queso[self.idx_tiempo_queso]
+                    # Transformación inversa para triangular
+                    # Parámetros: left=0.9, mode=1, right=1.2
+                    # Normalizar para scipy: c = (mode - left) / (right - left)
+                    c = (1 - 0.9) / (1.2 - 0.9)  # = 0.1 / 0.3 = 0.333...
+                    gamma_2 = triang.ppf(u, c=c, loc=0.9, scale=0.3) / 60
+                else:
+                    gamma_2 = self.rng.triangular(left = 0.9, mode = 1, right = 1.2)/60
+                
+                # SIEMPRE incrementar el contador
+                self.idx_tiempo_queso += 1
+                
                 yield self.env.timeout(gamma_2) # Esperamos a que se ponga el queso
                 # Descontamos queso
                 yield self.queso_mozzarella.get(xi_2)
@@ -583,7 +633,21 @@ class Pizzeria:
             yield horno_request
             if self.logs:
                 self.log(f'La pizza {num_pizza} del cliente {cliente} está en el horno.')
-            delta = self.rng.lognormal(mean=2.5, sigma=0.2)/60
+            
+            # Usar variable antitética si está disponible, sino generar normalmente
+            if self.idx_coccion < len(self.uniformes_coccion):
+                u = self.uniformes_coccion[self.idx_coccion]
+                # Transformación inversa para lognormal
+                # numpy lognormal(mean, sigma) genera exp(N(mean, sigma))
+                z = norm.ppf(u, loc=2.5, scale=0.2)
+                delta = np.exp(z) / 60
+            else:
+                # numpy: lognormal(mean, sigma) donde mean y sigma son parámetros de la normal subyacente
+                delta = self.rng.lognormal(mean=2.5, sigma=0.2)/60
+            
+            # SIEMPRE incrementar el contador (para contar en simulación preliminar)
+            self.idx_coccion += 1
+            
             yield self.env.timeout(delta)
             if self.logs:
                 self.log(f'La pizza {num_pizza} del cliente {cliente} salió del horno, solicitando embalaje.')
@@ -612,8 +676,17 @@ class Pizzeria:
             if self.logs:
                 self.log(f'El repartidor procede a llevar el pedido del cliente {cliente}.')
             
-            # Esperamos el tiempo que toma ir del local al domicilio.
-            tiempo_local_domicilio = self.rng.gamma(shape = 7.5, scale = 0.9)/60
+            # Usar variable antitética si está disponible, sino generar normalmente
+            if self.idx_despacho_ida < len(self.uniformes_despacho_ida):
+                u = self.uniformes_despacho_ida[self.idx_despacho_ida]
+                # Transformación inversa para gamma
+                tiempo_local_domicilio = gamma_dist.ppf(u, a=7.5, scale=0.9) / 60
+            else:
+                tiempo_local_domicilio = self.rng.gamma(shape = 7.5, scale = 0.9)/60
+            
+            # SIEMPRE incrementar el contador
+            self.idx_despacho_ida += 1
+            
             yield self.env.timeout(tiempo_local_domicilio)
             if self.logs:
                 self.log(f'Llega el repartidor al domicilio del cliente {cliente}.')
@@ -663,8 +736,17 @@ class Pizzeria:
                 # Pedido entregado a tiempo: sumar ingresos normalmente
                 self.ingresos += valor_orden
             
-            # Esperamos el tiempo que toma ir del domicilio al local.
-            tiempo_domicilio_local = self.rng.gamma(shape = 7.5, scale = 0.9)/60
+            # Usar variable antitética si está disponible, sino generar normalmente
+            if self.idx_despacho_vuelta < len(self.uniformes_despacho_vuelta):
+                u = self.uniformes_despacho_vuelta[self.idx_despacho_vuelta]
+                # Transformación inversa para gamma
+                tiempo_domicilio_local = gamma_dist.ppf(u, a=7.5, scale=0.9) / 60
+            else:
+                tiempo_domicilio_local = self.rng.gamma(shape = 7.5, scale = 0.9)/60
+            
+            # SIEMPRE incrementar el contador
+            self.idx_despacho_vuelta += 1
+            
             yield self.env.timeout(tiempo_domicilio_local)
             if self.logs:
                 self.log(f'Llega el repartidor del cliente {cliente} al local.')
@@ -963,41 +1045,154 @@ class Pizzeria:
         return horas
 
 
-def replicas_simulación(iteraciones, tiempo_horas):
+def replicas_simulación(iteraciones, tiempo_horas, usar_antiteticas=False):
+    """
+    Si usar_antiteticas=True, genera pares de réplicas:
+    - Réplica normal: usa U para variables antitéticas, semilla 2*i para el resto
+    - Réplica antitética: usa 1-U para variables antitéticas, semilla 2*i+1 para el resto
+    
+    Esto asegura:
+    1. Correlación negativa en las variables antitéticas (cocción y despacho)
+    2. Independencia en las demás variables aleatorias (semillas diferentes)
+    
+    Cotas estimadas para 168 horas (1 semana):
+    - Cocción: ~1700 (cubre hasta percentil 99)
+    - Despacho: ~1000 (cubre hasta percentil 99)
+    
+    Retorna:
+    - lista_resultados: lista con métricas de cada réplica
+    - estadisticas: dict con media, varianza y análisis del estimador
+    """
     lista_resultados = []
-    for i in range(iteraciones):
-        # np.random.seed(i)
-        env = sp.Environment()
-        pizzeria = Pizzeria(env)
-        pizzeria.iniciar_simulacion(tiempo_horas, i, logs=False)
-        lista_resultados.append(pizzeria.obtener_metricas())
+    estimadores_utilidad = []  # Para variables antitéticas: promedios de cada par
+    
+    if usar_antiteticas:
+        # Cotas generosas basadas en observaciones empíricas
+        n_coccion = 1700
+        n_despacho = 1000
+        n_llamada = 1000  # ~900 llamadas atendidas por semana
+        n_cantidad_queso = 1700  # Una por cada pizza
+        n_tiempo_queso = 1700  # Una por cada pizza
+        
+        # Generar pares de réplicas con variables antitéticas
+        pares = iteraciones // 2
+        
+        for i in range(pares):
+            # Generar números uniformes para las variables antitéticas
+            rng_antiteticas = np.random.default_rng(999999 + i)  # Semilla especial para variables antitéticas
+            uniformes_coccion = rng_antiteticas.uniform(0, 1, n_coccion)
+            uniformes_despacho_ida = rng_antiteticas.uniform(0, 1, n_despacho)
+            uniformes_despacho_vuelta = rng_antiteticas.uniform(0, 1, n_despacho)
+            uniformes_llamada = rng_antiteticas.uniform(0, 1, n_llamada)
+            uniformes_cantidad_queso = rng_antiteticas.uniform(0, 1, n_cantidad_queso)
+            uniformes_tiempo_queso = rng_antiteticas.uniform(0, 1, n_tiempo_queso)
+            
+            # Réplica normal con U
+            env = sp.Environment()
+            pizzeria = Pizzeria(env)
+            pizzeria.iniciar_simulacion(tiempo_horas, 2*i, logs=False,
+                                       uniformes_coccion=uniformes_coccion,
+                                       uniformes_despacho_ida=uniformes_despacho_ida,
+                                       uniformes_despacho_vuelta=uniformes_despacho_vuelta,
+                                       uniformes_llamada=uniformes_llamada,
+                                       uniformes_cantidad_queso=uniformes_cantidad_queso,
+                                       uniformes_tiempo_queso=uniformes_tiempo_queso)
+            metricas_normal = pizzeria.obtener_metricas()
+            lista_resultados.append(metricas_normal)
+            print(f'Réplica {2*i+1} (normal) completada.')
+            
+            # Réplica antitética con 1-U y semilla diferente para el resto
+            uniformes_coccion_anti = 1 - uniformes_coccion
+            uniformes_despacho_ida_anti = 1 - uniformes_despacho_ida
+            uniformes_despacho_vuelta_anti = 1 - uniformes_despacho_vuelta
+            uniformes_llamada_anti = 1 - uniformes_llamada
+            uniformes_cantidad_queso_anti = 1 - uniformes_cantidad_queso
+            uniformes_tiempo_queso_anti = 1 - uniformes_tiempo_queso
+            
+            env = sp.Environment()
+            pizzeria = Pizzeria(env)
+            pizzeria.iniciar_simulacion(tiempo_horas, 2*i+1, logs=False,
+                                       uniformes_coccion=uniformes_coccion_anti,
+                                       uniformes_despacho_ida=uniformes_despacho_ida_anti,
+                                       uniformes_despacho_vuelta=uniformes_despacho_vuelta_anti,
+                                       uniformes_llamada=uniformes_llamada_anti,
+                                       uniformes_cantidad_queso=uniformes_cantidad_queso_anti,
+                                       uniformes_tiempo_queso=uniformes_tiempo_queso_anti)
+            metricas_anti = pizzeria.obtener_metricas()
+            lista_resultados.append(metricas_anti)
+            print(f'Réplica {2*i+2} (antitética) completada.')
+            
+            # Calcular promedio del par para la utilidad (estimador con variables antitéticas)
+            utilidad_promedio_par = (metricas_normal['Utilidad'] + metricas_anti['Utilidad']) / 2
+            estimadores_utilidad.append(utilidad_promedio_par)
+            
+            print("")
+            print("--------------------------------")
+            print("")
+        
+        # Calcular estadísticas del estimador con variables antitéticas
+        media_estimador = np.mean(estimadores_utilidad)
+        varianza_estimador = np.var(estimadores_utilidad, ddof=1)
+        
+        print("\n" + "="*60)
+        print("RESULTADOS CON VARIABLES ANTITÉTICAS")
+        print("="*60)
+        print(f"Número de pares: {pares}")
+        print(f"Media del estimador (utilidad): ${media_estimador:,.2f}")
+        print(f"Varianza del estimador: {varianza_estimador:,.2f}")
+        print(f"Desviación estándar: ${np.sqrt(varianza_estimador):,.2f}")
+        print("="*60 + "\n")
+        
+        estadisticas = {
+            'metodo': 'Variables Antitéticas',
+            'n_pares': pares,
+            'media': media_estimador,
+            'varianza': varianza_estimador,
+            'std': np.sqrt(varianza_estimador),
+            'estimadores': estimadores_utilidad
+        }
+        
+    else:
+        # Réplicas independientes normales (caso base)
+        for i in range(iteraciones):
+            env = sp.Environment()
+            pizzeria = Pizzeria(env)
+            pizzeria.iniciar_simulacion(tiempo_horas, i, logs=False)
+            metricas = pizzeria.obtener_metricas()
+            lista_resultados.append(metricas)
+            estimadores_utilidad.append(metricas['Utilidad'])
+            print(f'Replica {i+1} completada.')
+            print("")
+            print("--------------------------------")
+            print("")
+        
+        # Calcular estadísticas del caso base (sin reducción de varianza)
+        media_estimador = np.mean(estimadores_utilidad)
+        varianza_estimador = np.var(estimadores_utilidad, ddof=1)
+        
+        print("\n" + "="*60)
+        print("RESULTADOS SIN REDUCCIÓN DE VARIANZA (CASO BASE)")
+        print("="*60)
+        print(f"Número de réplicas: {iteraciones}")
+        print(f"Media del estimador (utilidad): ${media_estimador:,.2f}")
+        print(f"Varianza del estimador: {varianza_estimador:,.2f}")
+        print(f"Desviación estándar: ${np.sqrt(varianza_estimador):,.2f}")
+        print("="*60 + "\n")
+        
+        estadisticas = {
+            'metodo': 'Caso Base',
+            'n_replicas': iteraciones,
+            'media': media_estimador,
+            'varianza': varianza_estimador,
+            'std': np.sqrt(varianza_estimador),
+            'estimadores': estimadores_utilidad
+        }
 
-        print(f'Replica {i+1} completada.')
-        # print()
-        # print(lista_resultados[i])
-
-        print("")
-        print("--------------------------------")
-        print("")
-
-    return lista_resultados
+    return lista_resultados, estadisticas
             
 
 if __name__ == "__main__":
-    for i in range(numero_replicas):
-        env = sp.Environment()
-        pizzeria = Pizzeria(env)
-        pizzeria.iniciar_simulacion(tiempo_simulacion, i, logs=logs)
-
-        print(f'Replica {i+1} completada.')
-        print()
-        print(pizzeria.obtener_metricas())
-        if logs:
-            pizzeria.generar_reporte_logs(f'reporte_logs_replica_{i+1}.txt')
-
-        print("")
-        print("--------------------------------")
-        print("")
+    replicas_simulación(50, tiempo_simulacion, True)
 
 
 

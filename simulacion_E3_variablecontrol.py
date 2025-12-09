@@ -160,6 +160,11 @@ class Pizzeria:
         self.tiempo_promedio_procesamiento_premium_semana = 0
         
         self.utilidad = self.ingresos - self.costos
+        
+        # Variables de control: registrar tiempos individuales
+        self.tiempos_coccion = []  # Para variable de control
+        self.tiempos_despacho = []  # Para variable de control (ida + vuelta)
+        self.tiempos_llamada = []  # Para variable de control
 
     
     def iniciar_simulacion(self, tiempo_horas, seed, logs=False):
@@ -260,7 +265,9 @@ class Pizzeria:
             'Tiempo Medio para Procesar un Pedido (min)': self.tiempo_promedio_procesamiento,
             'Tiempo Medio para Procesar un Pedido Normal (min)': self.tiempo_promedio_procesamiento_normales,
             'Tiempo Medio para Procesar un Pedido Premium (min)': self.tiempo_promedio_procesamiento_premium,
-            'Utilidad': self.utilidad
+            'Utilidad': self.utilidad,
+            # Variable de control: Total Pizzas (NO usar Ingresos porque es componente directo)
+            'Total Pizzas': self.pizzas_queso + self.pizzas_pepperoni + self.pizzas_carnes
         }
     
     def log(self, mensaje):
@@ -411,7 +418,8 @@ class Pizzeria:
                 self.log(f'Cliente {cliente} es común')
 
         # Generamos el tiempo que toma la atención por teléfono.
-        beta = self.rng.gamma(shape=4, scale=0.5, size=1)/60    
+        beta = self.rng.gamma(shape=4, scale=0.5, size=1)[0]/60
+        self.tiempos_llamada.append(beta * 60)  # Registrar en minutos para variable de control
         with self.lineas_telefonicas.request() as linea:
             yield self.env.timeout(beta) # Esperamos
         
@@ -584,6 +592,7 @@ class Pizzeria:
             if self.logs:
                 self.log(f'La pizza {num_pizza} del cliente {cliente} está en el horno.')
             delta = self.rng.lognormal(mean=2.5, sigma=0.2)/60
+            self.tiempos_coccion.append(delta * 60)  # Registrar en minutos para variable de control
             yield self.env.timeout(delta)
             if self.logs:
                 self.log(f'La pizza {num_pizza} del cliente {cliente} salió del horno, solicitando embalaje.')
@@ -614,6 +623,7 @@ class Pizzeria:
             
             # Esperamos el tiempo que toma ir del local al domicilio.
             tiempo_local_domicilio = self.rng.gamma(shape = 7.5, scale = 0.9)/60
+            self.tiempos_despacho.append(tiempo_local_domicilio * 60)  # Registrar ida en minutos
             yield self.env.timeout(tiempo_local_domicilio)
             if self.logs:
                 self.log(f'Llega el repartidor al domicilio del cliente {cliente}.')
@@ -665,6 +675,7 @@ class Pizzeria:
             
             # Esperamos el tiempo que toma ir del domicilio al local.
             tiempo_domicilio_local = self.rng.gamma(shape = 7.5, scale = 0.9)/60
+            self.tiempos_despacho.append(tiempo_domicilio_local * 60)  # Registrar vuelta en minutos
             yield self.env.timeout(tiempo_domicilio_local)
             if self.logs:
                 self.log(f'Llega el repartidor del cliente {cliente} al local.')
@@ -963,24 +974,118 @@ class Pizzeria:
         return horas
 
 
-def replicas_simulación(iteraciones, tiempo_horas):
+def replicas_simulación(iteraciones, tiempo_horas, usar_variable_control=False):
+    """
+    Ejecuta réplicas de la simulación.
+    
+    Si usar_variable_control=True, aplica la técnica de variable de control usando:
+    - X = Número total de pizzas producidas
+    - E[X] = 1589 pizzas por semana (calculado teóricamente)
+    
+    Cálculo de E[X]:
+    - E[llamadas atendidas] = 925 (935 llamadas × 0.99 atendidas)
+    - E[pizzas|premium] = 2.1, E[pizzas|normal] = 1.65
+    - E[pizzas por pedido] = 0.15×2.1 + 0.85×1.65 = 1.7175
+    - E[total pizzas] = 925 × 1.7175 ≈ 1589
+    
+    Retorna:
+    - lista_resultados: métricas de cada réplica
+    - estadisticas: dict con media, varianza y análisis del estimador
+    """
+    # Valor esperado teórico de total pizzas (NO usar Ingresos)
+    E_pizzas = 1589  # 925 llamadas × 1.7175 pizzas/llamada
+    
     lista_resultados = []
+    utilidades = []
+    X_list = []  # Total Pizzas por réplica
+    
     for i in range(iteraciones):
-        # np.random.seed(i)
         env = sp.Environment()
         pizzeria = Pizzeria(env)
         pizzeria.iniciar_simulacion(tiempo_horas, i, logs=False)
-        lista_resultados.append(pizzeria.obtener_metricas())
-
+        metricas = pizzeria.obtener_metricas()
+        lista_resultados.append(metricas)
+        
+        utilidades.append(metricas['Utilidad'])
+        X_list.append(metricas['Total Pizzas'])
+        
         print(f'Replica {i+1} completada.')
-        # print()
-        # print(lista_resultados[i])
-
         print("")
         print("--------------------------------")
         print("")
-
-    return lista_resultados
+    
+    if usar_variable_control:
+        # Convertir a arrays de numpy
+        Y = np.array(utilidades)
+        X = np.array(X_list)
+        
+        # Calcular coeficiente óptimo de control
+        # c = Cov(Y, X) / Var(X)
+        c = np.cov(Y, X)[0, 1] / np.var(X, ddof=1)
+        
+        # Estimador ajustado: Y* = Y - c(X - E[X])
+        Y_ajustado = Y - c * (X - E_pizzas)
+        
+        # Estadísticas del estimador ajustado
+        media_ajustada = np.mean(Y_ajustado)
+        varianza_ajustada = np.var(Y_ajustado, ddof=1)
+        
+        # Calcular correlación para diagnóstico
+        correlacion = np.corrcoef(Y, X)[0, 1]
+        
+        print("\n" + "="*60)
+        print("RESULTADOS CON VARIABLE DE CONTROL")
+        print("="*60)
+        print(f"Número de réplicas: {iteraciones}")
+        print(f"\nVariable de control:")
+        print(f"  X = Total pizzas producidas")
+        print(f"  E[X] = {E_pizzas} pizzas (teórico)")
+        print(f"  X̄ (observado) = {np.mean(X):.2f} pizzas")
+        print(f"\nCoeficiente de control:")
+        print(f"  c = {c:.4f}")
+        print(f"  Correlación(Y, X) = {correlacion:.4f}")
+        print(f"\nMedia del estimador ajustado (utilidad): ${media_ajustada:,.2f}")
+        print(f"Varianza del estimador ajustado: {varianza_ajustada:,.2f}")
+        print(f"Desviación estándar: ${np.sqrt(varianza_ajustada):,.2f}")
+        print("="*60 + "\n")
+        
+        estadisticas = {
+            'metodo': 'Variable de Control',
+            'n_replicas': iteraciones,
+            'media': media_ajustada,
+            'varianza': varianza_ajustada,
+            'std': np.sqrt(varianza_ajustada),
+            'estimadores': Y_ajustado.tolist(),
+            'coeficiente': c,
+            'correlacion': correlacion,
+            'E_pizzas': E_pizzas,
+            'X_mean': np.mean(X)
+        }
+    else:
+        # Caso base sin variable de control
+        media = np.mean(utilidades)
+        varianza = np.var(utilidades, ddof=1)
+        
+        print("\n" + "="*60)
+        print("RESULTADOS SIN REDUCCIÓN DE VARIANZA (CASO BASE)")
+        print("="*60)
+        print(f"Número de réplicas: {iteraciones}")
+        print(f"Ingresos promedio: ${np.mean(X_list):,.2f}")
+        print(f"Media del estimador (utilidad): ${media:,.2f}")
+        print(f"Varianza del estimador: {varianza:,.2f}")
+        print(f"Desviación estándar: ${np.sqrt(varianza):,.2f}")
+        print("="*60 + "\n")
+        
+        estadisticas = {
+            'metodo': 'Caso Base',
+            'n_replicas': iteraciones,
+            'media': media,
+            'varianza': varianza,
+            'std': np.sqrt(varianza),
+            'estimadores': utilidades
+        }
+    
+    return lista_resultados, estadisticas
             
 
 if __name__ == "__main__":

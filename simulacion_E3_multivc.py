@@ -160,6 +160,11 @@ class Pizzeria:
         self.tiempo_promedio_procesamiento_premium_semana = 0
         
         self.utilidad = self.ingresos - self.costos
+        
+        # Variables de control: registrar tiempos individuales
+        self.tiempos_coccion = []  # Para variable de control
+        self.tiempos_despacho = []  # Para variable de control (ida + vuelta)
+        self.tiempos_llamada = []  # Para variable de control
 
     
     def iniciar_simulacion(self, tiempo_horas, seed, logs=False):
@@ -252,6 +257,13 @@ class Pizzeria:
         
         self.utilidad = self.ingresos - self.costos
         
+        # Calcular número total de pizzas para variables de control
+        total_pizzas = self.pizzas_queso + self.pizzas_pepperoni + self.pizzas_carnes
+        
+        # Calcular tiempos promedio para variables de control
+        tiempo_promedio_coccion = np.mean(self.tiempos_coccion) if self.tiempos_coccion else 0
+        tiempo_promedio_despacho = np.mean(self.tiempos_despacho) if self.tiempos_despacho else 0
+        
         return {
             'Proporcion Llamadas Perdidas': self.proporcion_llamadas_perdidas,
             'Proporcion Pedidos Tardíos': self.proporcion_pedidos_tardios,
@@ -260,7 +272,11 @@ class Pizzeria:
             'Tiempo Medio para Procesar un Pedido (min)': self.tiempo_promedio_procesamiento,
             'Tiempo Medio para Procesar un Pedido Normal (min)': self.tiempo_promedio_procesamiento_normales,
             'Tiempo Medio para Procesar un Pedido Premium (min)': self.tiempo_promedio_procesamiento_premium,
-            'Utilidad': self.utilidad
+            'Utilidad': self.utilidad,
+            # Variables de control independientes (NO incluir Ingresos porque es componente directo)
+            'Total Pizzas': total_pizzas,
+            'Tiempo Promedio Coccion': tiempo_promedio_coccion,
+            'Tiempo Promedio Despacho': tiempo_promedio_despacho
         }
     
     def log(self, mensaje):
@@ -411,7 +427,8 @@ class Pizzeria:
                 self.log(f'Cliente {cliente} es común')
 
         # Generamos el tiempo que toma la atención por teléfono.
-        beta = self.rng.gamma(shape=4, scale=0.5, size=1)/60    
+        beta = self.rng.gamma(shape=4, scale=0.5, size=1)[0]/60
+        self.tiempos_llamada.append(beta * 60)  # Registrar en minutos para variable de control
         with self.lineas_telefonicas.request() as linea:
             yield self.env.timeout(beta) # Esperamos
         
@@ -584,6 +601,7 @@ class Pizzeria:
             if self.logs:
                 self.log(f'La pizza {num_pizza} del cliente {cliente} está en el horno.')
             delta = self.rng.lognormal(mean=2.5, sigma=0.2)/60
+            self.tiempos_coccion.append(delta * 60)  # Registrar en minutos para variable de control
             yield self.env.timeout(delta)
             if self.logs:
                 self.log(f'La pizza {num_pizza} del cliente {cliente} salió del horno, solicitando embalaje.')
@@ -614,6 +632,7 @@ class Pizzeria:
             
             # Esperamos el tiempo que toma ir del local al domicilio.
             tiempo_local_domicilio = self.rng.gamma(shape = 7.5, scale = 0.9)/60
+            self.tiempos_despacho.append(tiempo_local_domicilio * 60)  # Registrar ida en minutos
             yield self.env.timeout(tiempo_local_domicilio)
             if self.logs:
                 self.log(f'Llega el repartidor al domicilio del cliente {cliente}.')
@@ -665,6 +684,7 @@ class Pizzeria:
             
             # Esperamos el tiempo que toma ir del domicilio al local.
             tiempo_domicilio_local = self.rng.gamma(shape = 7.5, scale = 0.9)/60
+            self.tiempos_despacho.append(tiempo_domicilio_local * 60)  # Registrar vuelta en minutos
             yield self.env.timeout(tiempo_domicilio_local)
             if self.logs:
                 self.log(f'Llega el repartidor del cliente {cliente} al local.')
@@ -963,24 +983,208 @@ class Pizzeria:
         return horas
 
 
-def replicas_simulación(iteraciones, tiempo_horas):
+def replicas_simulación(iteraciones, tiempo_horas, usar_variable_control=False):
+    """
+    Ejecuta réplicas de la simulación.
+    
+    Si usar_variable_control=True, aplica la técnica de MÚLTIPLES variables de control:
+    - X1 = Ingresos totales, E[X1] = $14,784,870 (correlación ~0.98 con utilidad)
+    - X2 = Total pizzas producidas, E[X2] = 1589 pizzas (correlación ~0.41 con utilidad)
+    
+    Cálculo de E[X1] (Ingresos):
+    - 925 llamadas atendidas (99% de 935)
+    - 15% premium, 85% normal
+    - Proporción a tiempo: 92.95%
+    - E[Ingresos] = pedidos_premium_a_tiempo × 2.1 × 8,700 + pedidos_normal_a_tiempo × 1.65 × 10,300
+    
+    Cálculo de E[X2] (Pizzas):
+    - E[pizzas] = 925 × (0.15×2.1 + 0.85×1.65) = 925 × 1.7175 ≈ 1589
+    
+    Estimador con múltiples VC: Y* = Y - c1(X1 - E[X1]) - c2(X2 - E[X2])
+    donde c = (Σ^-1) * Cov(Y, X) y Σ = matriz de covarianza de X
+    
+    Retorna:
+    - lista_resultados: métricas de cada réplica
+    - estadisticas: dict con media, varianza y análisis del estimador
+    """
+    # Valores esperados teóricos de las variables de control
+    # NO usar Ingresos porque es componente directo de Utilidad = Ingresos - Costos
+    E_pizzas = 1589  # 925 llamadas × 1.7175 pizzas/llamada
+    E_tiempo_coccion = 12.43  # exp(2.5 + 0.04/2) minutos (LogNormal)
+    E_tiempo_despacho = 6.75  # 7.5 × 0.9 minutos (Gamma)
+    
     lista_resultados = []
+    utilidades = []
+    X1_list = []  # Total pizzas
+    X2_list = []  # Tiempo promedio cocción
+    X3_list = []  # Tiempo promedio despacho
+    
     for i in range(iteraciones):
-        # np.random.seed(i)
         env = sp.Environment()
         pizzeria = Pizzeria(env)
         pizzeria.iniciar_simulacion(tiempo_horas, i, logs=False)
-        lista_resultados.append(pizzeria.obtener_metricas())
-
+        metricas = pizzeria.obtener_metricas()
+        lista_resultados.append(metricas)
+        
+        utilidades.append(metricas['Utilidad'])
+        X1_list.append(metricas['Total Pizzas'])
+        X2_list.append(metricas['Tiempo Promedio Coccion'])
+        X3_list.append(metricas['Tiempo Promedio Despacho'])
+        
         print(f'Replica {i+1} completada.')
-        # print()
-        # print(lista_resultados[i])
-
         print("")
         print("--------------------------------")
         print("")
-
-    return lista_resultados
+    
+    if usar_variable_control:
+        # Convertir a arrays de numpy
+        Y = np.array(utilidades)
+        X1 = np.array(X1_list)  # Total pizzas
+        X2 = np.array(X2_list)  # Tiempo promedio cocción
+        X3 = np.array(X3_list)  # Tiempo promedio despacho
+        
+        # IMPORTANTE: Dividir en conjunto de calibración (40%) y estimación (60%)
+        # Aumentamos calibración para estabilizar coeficientes con múltiples variables
+        n_total = len(Y)
+        n_calib = int(0.4 * n_total)
+        n_estim = n_total - n_calib
+        
+        # Conjunto de calibración (primeras 20% réplicas)
+        Y_calib = Y[:n_calib]
+        X1_calib = X1[:n_calib]
+        X2_calib = X2[:n_calib]
+        X3_calib = X3[:n_calib]
+        
+        # Conjunto de estimación (últimas 80% réplicas)
+        Y_estim = Y[n_calib:]
+        X1_estim = X1[n_calib:]
+        X2_estim = X2[n_calib:]
+        X3_estim = X3[n_calib:]
+        
+        # FASE 1: CALIBRACIÓN - Calcular coeficientes óptimos usando conjunto de calibración
+        # Fórmula correcta para múltiples variables: c_j* = -Cov(Y, X_j) / Var(X_j)
+        # Cada coeficiente se calcula de forma INDEPENDIENTE (no se usa inversión de matriz)
+        
+        # Calcular covarianzas entre Y y cada Xi
+        cov_Y_X1_calib = np.cov(Y_calib, X1_calib, ddof=1)[0, 1]
+        cov_Y_X2_calib = np.cov(Y_calib, X2_calib, ddof=1)[0, 1]
+        cov_Y_X3_calib = np.cov(Y_calib, X3_calib, ddof=1)[0, 1]
+        
+        # Calcular varianzas de cada Xi
+        var_X1_calib = np.var(X1_calib, ddof=1)
+        var_X2_calib = np.var(X2_calib, ddof=1)
+        var_X3_calib = np.var(X3_calib, ddof=1)
+        
+        # Calcular coeficientes óptimos: c_j* = -Cov(Y, X_j) / Var(X_j)
+        c1 = -cov_Y_X1_calib / var_X1_calib
+        c2 = -cov_Y_X2_calib / var_X2_calib
+        c3 = -cov_Y_X3_calib / var_X3_calib
+        
+        # FASE 2: ESTIMACIÓN - Aplicar coeficientes al conjunto de estimación
+        Y_ajustado = Y_estim - c1 * (X1_estim - E_pizzas) - c2 * (X2_estim - E_tiempo_coccion) - c3 * (X3_estim - E_tiempo_despacho)
+        
+        # Estadísticas del estimador ajustado (solo sobre conjunto de estimación)
+        media_ajustada = np.mean(Y_ajustado)
+        varianza_ajustada = np.var(Y_ajustado, ddof=1)
+        
+        # Calcular correlaciones para diagnóstico (sobre datos de calibración)
+        corr_Y_X1 = np.corrcoef(Y_calib, X1_calib)[0, 1]
+        corr_Y_X2 = np.corrcoef(Y_calib, X2_calib)[0, 1]
+        corr_Y_X3 = np.corrcoef(Y_calib, X3_calib)[0, 1]
+        corr_X1_X2 = np.corrcoef(X1_calib, X2_calib)[0, 1]
+        corr_X1_X3 = np.corrcoef(X1_calib, X3_calib)[0, 1]
+        corr_X2_X3 = np.corrcoef(X2_calib, X3_calib)[0, 1]
+        
+        print("\n" + "="*75)
+        print("RESULTADOS CON MÚLTIPLES VARIABLES DE CONTROL INDEPENDIENTES")
+        print("="*75)
+        print(f"Número de réplicas TOTAL: {iteraciones}")
+        print(f"  - Calibración: {n_calib} réplicas (40%)")
+        print(f"  - Estimación: {n_estim} réplicas (60%)")
+        print(f"\nVariables de control:")
+        print(f"  X1 = Total pizzas producidas")
+        print(f"    E[X1] = {E_pizzas} pizzas (teórico)")
+        print(f"    X̄1 calibración = {np.mean(X1_calib):.2f} pizzas")
+        print(f"    X̄1 estimación = {np.mean(X1_estim):.2f} pizzas")
+        print(f"    Correlación(Y, X1) = {corr_Y_X1:.4f} [en calibración]")
+        print(f"\n  X2 = Tiempo promedio cocción")
+        print(f"    E[X2] = {E_tiempo_coccion:.2f} minutos (teórico)")
+        print(f"    X̄2 calibración = {np.mean(X2_calib):.2f} minutos")
+        print(f"    X̄2 estimación = {np.mean(X2_estim):.2f} minutos")
+        print(f"    Correlación(Y, X2) = {corr_Y_X2:.4f} [en calibración]")
+        print(f"\n  X3 = Tiempo promedio despacho (ida)")
+        print(f"    E[X3] = {E_tiempo_despacho:.2f} minutos (teórico)")
+        print(f"    X̄3 calibración = {np.mean(X3_calib):.2f} minutos")
+        print(f"    X̄3 estimación = {np.mean(X3_estim):.2f} minutos")
+        print(f"    Correlación(Y, X3) = {corr_Y_X3:.4f} [en calibración]")
+        print(f"\n  Correlaciones entre variables de control:")
+        print(f"    Corr(X1, X2) = {corr_X1_X2:.4f}")
+        print(f"    Corr(X1, X3) = {corr_X1_X3:.4f}")
+        print(f"    Corr(X2, X3) = {corr_X2_X3:.4f}")
+        print(f"\nCoeficientes de control óptimos (calculados con calibración):")
+        print(f"  c1 (Pizzas) = {c1:.4f}")
+        print(f"  c2 (Cocción) = {c2:.4f}")
+        print(f"  c3 (Despacho) = {c3:.4f}")
+        print(f"\nResultados del estimador ajustado (sobre {n_estim} réplicas de estimación):")
+        print(f"  Media: ${media_ajustada:,.2f}")
+        print(f"  Varianza: {varianza_ajustada:,.2f}")
+        print(f"  Desviación estándar: ${np.sqrt(varianza_ajustada):,.2f}")
+        print("="*75 + "\n")
+        
+        estadisticas = {
+            'metodo': 'Múltiples Variables de Control',
+            'n_replicas': n_estim,  # Solo contamos las de estimación para comparación justa
+            'n_total': iteraciones,
+            'n_calib': n_calib,
+            'media': media_ajustada,
+            'varianza': varianza_ajustada,
+            'std': np.sqrt(varianza_ajustada),
+            'estimadores': Y_ajustado.tolist(),
+            'coeficientes': {'c1_pizzas': c1, 'c2_coccion': c2, 'c3_despacho': c3},
+            'correlaciones': {
+                'Y_X1': corr_Y_X1,
+                'Y_X2': corr_Y_X2,
+                'Y_X3': corr_Y_X3,
+                'X1_X2': corr_X1_X2,
+                'X1_X3': corr_X1_X3,
+                'X2_X3': corr_X2_X3
+            },
+            'E_pizzas': E_pizzas,
+            'E_tiempo_coccion': E_tiempo_coccion,
+            'E_tiempo_despacho': E_tiempo_despacho,
+            'X1_mean_calib': np.mean(X1_calib),
+            'X2_mean_calib': np.mean(X2_calib),
+            'X3_mean_calib': np.mean(X3_calib),
+            'X1_mean_estim': np.mean(X1_estim),
+            'X2_mean_estim': np.mean(X2_estim),
+            'X3_mean_estim': np.mean(X3_estim)
+        }
+    else:
+        # Caso base sin variable de control
+        media = np.mean(utilidades)
+        varianza = np.var(utilidades, ddof=1)
+        
+        print("\n" + "="*60)
+        print("RESULTADOS SIN REDUCCIÓN DE VARIANZA (CASO BASE)")
+        print("="*60)
+        print(f"Número de réplicas: {iteraciones}")
+        print(f"Pizzas promedio: {np.mean(X1_list):.2f}")
+        print(f"Pedidos promedio: {np.mean(X2_list):.2f}")
+        print(f"Media del estimador (utilidad): ${media:,.2f}")
+        print(f"Varianza del estimador: {varianza:,.2f}")
+        print(f"Desviación estándar: ${np.sqrt(varianza):,.2f}")
+        print("="*60 + "\n")
+        
+        estadisticas = {
+            'metodo': 'Caso Base',
+            'n_replicas': iteraciones,
+            'media': media,
+            'varianza': varianza,
+            'std': np.sqrt(varianza),
+            'estimadores': utilidades
+        }
+    
+    return lista_resultados, estadisticas
             
 
 if __name__ == "__main__":

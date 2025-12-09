@@ -125,8 +125,8 @@ for nombre in titulos_metricas:
     print()
 
     # Recolectamos los datos de todas las replicas promedio por si nos sirve de algo en un futuro :)
-    promedios_resultados_metricas[nombre] = round(float(np.mean(reales)), 2)
-    promedios_validacion_metricas[nombre] = round(float(np.mean(validacion)), 2)
+    promedios_resultados_metricas[nombre] = round(float(np.mean(reales)), 7)
+    promedios_validacion_metricas[nombre] = round(float(np.mean(validacion)), 7)
 
     print(f"Promedio métrica '{nombre}' en simulación: {promedios_resultados_metricas[nombre]}")
     print(f"Promedio métrica '{nombre}' en validación: {promedios_validacion_metricas[nombre]}\n")
