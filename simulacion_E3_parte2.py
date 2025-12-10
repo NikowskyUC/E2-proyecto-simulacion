@@ -97,35 +97,35 @@ class Pizzeria:
 
         # Tasas de llegada de llamadas
         self.tasas_dia_normal = {
-            10: 2,
-            11: 6,
-            12: 12,
-            13: 20,
-            14: 12,
-            15: 14,
-            16: 12,
-            17: 10,
-            18: 9,
-            19: 8,
-            20: 6,
-            21: 4,
+            10: 1.5,
+            11: 4.5,
+            12: 9,
+            13: 15,
+            14: 9,
+            15: 10.5,
+            16: 9,
+            17: 7.5,
+            18: 6.75,
+            19: 6,
+            20: 4.5,
+            21: 3,
         }
 
         self.tasas_finde = {
-            10: 2,
-            11: 8,
-            12: 18,
-            13: 25,
-            14: 25,
-            15: 24,
-            16: 18,
-            17: 12,
-            18: 11,
-            19: 10,
-            20: 9,
-            21: 8,
-            22: 6,
-            23: 4,
+            10: 2.5,
+            11: 10,
+            12: 22.5,
+            13: 31.25,
+            14: 31.25,
+            15: 30,
+            16: 22.5,
+            17: 15,
+            18: 13.75,
+            19: 12.5,
+            20: 11.25,
+            21: 10,
+            22: 7.5,
+            23: 5,
         }
 
         # Medidas auxiliares
@@ -775,6 +775,134 @@ class Pizzeria:
 
         return horas
 
+def medias_teoricas_VC(pizzeria, prob_premium=3/20, factor_atencion=0.99):
+    """
+    Calcula las medias teóricas E[X] de TODAS las variables de control, en el
+    MISMO orden en que se arma la matriz X en replicas_mixto:
+
+        X = [
+          X_pizzas,  # 1) Total Pizzas
+          X_llam,    # 2) Tiempo Promedio Llamada (min)
+          X_salsa,   # 3) Tiempo Promedio Salsa (min)
+          X_queso,   # 4) Tiempo Promedio Queso (min)
+          X_pepp,    # 5) Tiempo Promedio Pepperoni (min)
+          X_carnes,  # 6) Tiempo Promedio Carnes (min)
+          X_horno,   # 7) Tiempo Promedio Cocción (min)
+          X_embal,   # 8) Tiempo Promedio Embalaje (min)
+          X_desp,    # 9) Tiempo Promedio Despacho (min)
+          X_inter,   # 10) Tiempo Promedio Entre Llamadas (horas)
+          X_prem     # 11) Proporción Premium
+        ]
+
+    Retorna:
+        np.array([E_pizzas_totales, E_t_llam, E_t_salsa, E_t_queso, E_t_pepp,
+                  E_t_carnes, E_t_horno, E_t_embal, E_t_desp, E_T_inter, E_prop_premium])
+    """
+
+    prob_normal = 1 - prob_premium
+
+    # ------------------------------------------------------------------
+    # 1) E[Total Pizzas en la semana]
+    # ------------------------------------------------------------------
+    # 1.a) E[pizzas por pedido premium]  (soporte {1,2,3,4})
+    E_pizzas_premium = 1*0.3 + 2*0.4 + 3*0.2 + 4*0.1   # = 2.1
+
+    # 1.b) E[pizzas por pedido normal]  (soporte {1,2,3,4})
+    E_pizzas_normal = 1*0.6 + 2*0.2 + 3*0.15 + 4*0.05  # = 1.65
+
+    # 1.c) E[pizzas por pedido] (mezcla premium/normal)
+    E_pizzas_por_pedido = prob_premium * E_pizzas_premium + prob_normal * E_pizzas_normal
+    #   = 0.15*2.1 + 0.85*1.65 = 1.7175
+
+    # 1.d) E[número de llamadas que llegan por semana]
+    tasas_normal = list(pizzeria.tasas_dia_normal.values())  # 12 horas (10–21)
+    tasas_finde  = list(pizzeria.tasas_finde.values())       # 14 horas (10–23)
+
+    E_llamadas_dia_normal = sum(tasas_normal)
+    E_llamadas_dia_finde  = sum(tasas_finde)
+
+    # 5 días normales + 2 días de finde por semana
+    E_llamadas_semana = 5 * E_llamadas_dia_normal + 2 * E_llamadas_dia_finde
+
+    # 1.e) E[pedidos atendidos] ≈ factor_atencion * llamadas que llegan
+    E_pedidos_atendidos = factor_atencion * E_llamadas_semana  # ~0.99*935 = 925
+
+    # 1.f) E[Total Pizzas] = E[pedidos atendidos] × E[pizzas por pedido]
+    E_pizzas_totales = E_pedidos_atendidos * E_pizzas_por_pedido
+
+    # ------------------------------------------------------------------
+    # 2) Tiempos de proceso: medias teóricas de las distribuciones
+    # ------------------------------------------------------------------
+
+    # X2: Tiempo de llamada ~ Gamma(4, 0.5) horas  ⇒ *60 → minutos
+    shape_llam, scale_llam = 4, 0.5
+    E_t_llam = shape_llam * scale_llam * 60
+
+    # X3: Tiempo salsa ~ Beta(a=5, b=2.2) horas ⇒ *60 → minutos
+    a_salsa, b_salsa = 5, 2.2
+    E_t_salsa = (a_salsa / (a_salsa + b_salsa)) * 60
+
+    # X4: Tiempo queso ~ Triangular(0.9, 1.0, 1.2) minutos
+    left_q, mode_q, right_q = 0.9, 1.0, 1.2
+    E_t_queso = (left_q + mode_q + right_q) / 3
+
+    # X5: Tiempo pepperoni ~ Lognormal(mean=0.5, sigma=0.25) horas ⇒ *60 → minutos
+    mu_pepp, sigma_pepp = 0.5, 0.25
+    E_t_pepp = np.exp(mu_pepp + 0.5 * sigma_pepp**2) * 60
+
+    # X6: Tiempo carnes ~ Uniform(1, 1.8) minutos
+    a_c, b_c = 1.0, 1.8
+    E_t_carnes = (a_c + b_c) / 2
+
+    # X7: Tiempo horno ~ Lognormal(mean=2.5, sigma=0.2) horas ⇒ *60 → minutos
+    mu_h, sigma_h = 2.5, 0.2
+    E_t_horno = np.exp(mu_h + 0.5 * sigma_h**2) * 60
+
+    # X8: Tiempo embalaje ~ Triangular(1.1, 2.0, 2.3) minutos
+    left_e, mode_e, right_e = 1.1, 2.0, 2.3
+    E_t_embal = (left_e + mode_e + right_e) / 3
+
+    # X9: Tiempo despacho ~ Gamma(7.5, 0.9) horas ⇒ *60 → minutos
+    k_d, theta_d = 7.5, 0.9
+    E_t_desp = k_d * theta_d * 60
+
+    # ------------------------------------------------------------------
+    # 3) Tiempo entre llamadas (proceso de renovación no homogéneo)
+    # ------------------------------------------------------------------
+    # E[T] ≈ promedio ponderado de 1/λ por hora de operación
+
+    # Días normales: 10–22h (12 tasas en tasas_dia_normal)
+    E_T_normal = np.mean([1.0 / lam for lam in tasas_normal])
+
+    # Fines de semana: 10–23h (14 tasas en tasas_finde)
+    E_T_finde = np.mean([1.0 / lam for lam in tasas_finde])
+
+    # Mezcla semanal 5 días normales + 2 finde
+    E_T_inter = (5 * E_T_normal + 2 * E_T_finde) / 7  # en horas
+
+    # ------------------------------------------------------------------
+    # 4) Proporción de pedidos premium
+    # ------------------------------------------------------------------
+    E_prop_premium = prob_premium
+
+    # ------------------------------------------------------------------
+    # Empaquetar en vector (11 elementos) en el mismo orden que X
+    # ------------------------------------------------------------------
+    return np.array([
+        E_pizzas_totales,  # 1) Total Pizzas
+        E_t_llam,          # 2) Tiempo Llamada (min)
+        E_t_salsa,         # 3) Tiempo Salsa (min)
+        E_t_queso,         # 4) Tiempo Queso (min)
+        E_t_pepp,          # 5) Tiempo Pepperoni (min)
+        E_t_carnes,        # 6) Tiempo Carnes (min)
+        E_t_horno,         # 7) Tiempo Cocción (min)
+        E_t_embal,         # 8) Tiempo Embalaje (min)
+        E_t_desp,          # 9) Tiempo Despacho (min)
+        E_T_inter,         # 10) Tiempo Entre Llamadas (horas)
+        E_prop_premium,    # 11) Proporción Premium
+    ])
+
+
 
 # ======================================================================
 # Réplicas: caso base, antitéticas, VC, antitéticas + VC
@@ -978,14 +1106,9 @@ def replicas_mixto(
             "n_eff": n_eff,
         }
 
-    # --------------------------------------------------------------
+        # --------------------------------------------------------------
     # Variables de control con regresión múltiple
     # --------------------------------------------------------------
-        # Matriz de variables de control (11 en total)
-    # 1) Total Pizzas
-    # 2–8) Tiempos promedio de procesos (min)
-    # 9) Tiempo promedio entre llamadas (horas)
-    # 10) Proporción premium
     X = np.column_stack([
         X_pizzas,  # VC1
         X_llam,    # VC2
@@ -1000,43 +1123,16 @@ def replicas_mixto(
         X_prem,    # VC11
     ])
 
-    # Medias teóricas de las VC (en mismas unidades que las métricas)
-    E_llamada = 2.0        # Gamma(4,0.5) minutos
-    E_salsa   = 5.0 / 7.2  # Beta(5,2.2) minutos ≈ 0.6944
-    E_queso   = (0.9 + 1 + 1.2) / 3          # Triangular(0.9,1,1.2) ≈ 1.0333 min
-    E_pepp    = math.exp(0.5 + 0.25**2 / 2)  # Lognormal(0.5,0.25) ≈ 1.70 min
-    E_carnes  = (1 + 1.8) / 2                # Uniform(1,1.8) = 1.4 min
-    E_horno   = math.exp(2.5 + 0.2**2 / 2)   # Lognormal(2.5,0.2) ≈ 12.43 min
-    E_embal   = (1.1 + 2 + 2.3) / 3          # Triangular(1.1,2,2.3) = 1.8 min
-    E_desp    = 7.5 * 0.9                    # Gamma(7.5,0.9) = 6.75 min
+    # Medias teóricas en el MISMO orden que las columnas de X
+    E_X = medias_teoricas_VC(Pizzeria(sp.Environment()))
 
-    # E[X_inter]: tiempo entre llamadas promedio (en horas)
-    E_inter   = 0.1430   # mismo valor que usaste en el código ortogonal
-
-    # E[X_prem]: proporción de pedidos premium
-    E_prem    = 3.0 / 20.0   # = 0.15
-
-    E_X = np.array([
-        E_pizzas,     # Total Pizzas
-        E_llamada,    # Tiempo Promedio Llamada (min)
-        E_salsa,      # Tiempo Promedio Salsa (min)
-        E_queso,      # Tiempo Promedio Queso (min)
-        E_pepp,       # Tiempo Promedio Pepperoni (min)
-        E_carnes,     # Tiempo Promedio Carnes (min)
-        E_horno,      # Tiempo Promedio Coccion (min)
-        E_embal,      # Tiempo Promedio Embalaje (min)
-        E_desp,       # Tiempo Promedio Despacho (min)
-        E_inter,      # Tiempo Promedio Entre Llamadas (horas)
-        E_prem,       # Proporcion Premium
-    ], dtype=float)
-
-
+    # Centrado
     X_centered = X - E_X
     Y_centered = Y - np.mean(Y)
 
     beta, *_ = np.linalg.lstsq(X_centered, Y_centered, rcond=None)
-
     Y_control = Y - X_centered @ beta
+
     media_control = np.mean(Y_control)
     var_control = np.var(Y_control, ddof=1) / n_eff
     sd_control = math.sqrt(var_control)
