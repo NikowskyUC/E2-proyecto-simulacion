@@ -1,6 +1,8 @@
 import numpy as np
 import simpy as sp
 import math
+import csv
+
 
 # Tiempo de simulación por defecto (1 semana)
 tiempo_simulacion = 168  # horas
@@ -918,37 +920,36 @@ def replicas_mixto(
     """
     Ejecuta la simulación con las siguientes opciones:
       - usar_antiteticas: aplica variables antitéticas en tiempos entre llamadas
-      - usar_vc: aplica variables de control (Total Pizzas, tiempo cocción, tiempo despacho)
+      - usar_vc: aplica variables de control (Total Pizzas)
     Si usar_antiteticas=True, n_replicas debe ser PAR (trabajamos por pares).
-    """
 
-    # Valores esperados teóricos de las VC (mismo que en tu código de VC)
-    E_pizzas = 1589
-    E_tiempo_coccion = 12.43
-    E_tiempo_despacho = 6.75
+    IMPORTANTE:
+    - Sin VC: devuelve estadísticos usando TODOS los estimadores Y generados
+      (Y = utilidades o promedios antitéticos por par).
+    - Con VC (two-stage): los estadísticos "simple" y "control" usan SOLO las
+      réplicas de ESTIMACIÓN (n_estim).
+    """
 
     Y = []   # utilidades (o estimador antitético por par)
 
-    # VC1: Total de pizzas
-    X_pizzas = []
+    # Variables de control que recolectamos de la simulación
+    X_pizzas = []   # Total de pizzas
 
-    # VC2–VC8: tiempos promedio de procesos (en minutos)
-    X_llam = []      # Tiempo Promedio Llamada
-    X_salsa = []     # Tiempo Promedio Salsa
-    X_queso = []     # Tiempo Promedio Queso
-    X_pepp = []      # Tiempo Promedio Pepperoni
-    X_carnes = []    # Tiempo Promedio Carnes
-    X_horno = []     # Tiempo Promedio Coccion
-    X_embal = []     # Tiempo Promedio Embalaje
-    X_desp = []      # Tiempo Promedio Despacho
+    # (resto de VC que no usamos ahora, pero las dejamos por si amplías a multi-VC)
+    X_llam = []
+    X_salsa = []
+    X_queso = []
+    X_pepp = []
+    X_carnes = []
+    X_horno = []
+    X_embal = []
+    X_desp = []
+    X_inter = []
+    X_prem = []
 
-    # VC9: tiempo promedio entre llamadas (en horas)
-    X_inter = []     # Tiempo Promedio Entre Llamadas
-
-    # VC10: proporción de pedidos premium
-    X_prem = []      # Proporcion Premium
-
-
+    # --------------------------------------------------------------
+    # 1) Generación de réplicas (con o sin antitéticas)
+    # --------------------------------------------------------------
     if usar_antiteticas:
         if n_replicas % 2 != 0:
             raise ValueError("Con antitéticas, n_replicas debe ser par.")
@@ -996,46 +997,21 @@ def replicas_mixto(
             Y_par = 0.5 * (util1 + util2)
             Y.append(Y_par)
 
-            # Promedio por par de CADA variable de control
-            X_pizzas.append(
-                0.5 * (met1["Total Pizzas"] + met2["Total Pizzas"])
-            )
+            # Promedio por par de variables de control
+            X_pizzas.append(0.5 * (met1["Total Pizzas"] + met2["Total Pizzas"]))
 
-            X_llam.append(
-                0.5 * (met1["Tiempo Promedio Llamada"] + met2["Tiempo Promedio Llamada"])
-            )
-            X_salsa.append(
-                0.5 * (met1["Tiempo Promedio Salsa"] + met2["Tiempo Promedio Salsa"])
-            )
-            X_queso.append(
-                0.5 * (met1["Tiempo Promedio Queso"] + met2["Tiempo Promedio Queso"])
-            )
-            X_pepp.append(
-                0.5 * (met1["Tiempo Promedio Pepperoni"] + met2["Tiempo Promedio Pepperoni"])
-            )
-            X_carnes.append(
-                0.5 * (met1["Tiempo Promedio Carnes"] + met2["Tiempo Promedio Carnes"])
-            )
-            X_horno.append(
-                0.5 * (met1["Tiempo Promedio Coccion"] + met2["Tiempo Promedio Coccion"])
-            )
-            X_embal.append(
-                0.5 * (met1["Tiempo Promedio Embalaje"] + met2["Tiempo Promedio Embalaje"])
-            )
-            X_desp.append(
-                0.5 * (met1["Tiempo Promedio Despacho"] + met2["Tiempo Promedio Despacho"])
-            )
+            X_llam.append(0.5 * (met1["Tiempo Promedio Llamada"] + met2["Tiempo Promedio Llamada"]))
+            X_salsa.append(0.5 * (met1["Tiempo Promedio Salsa"] + met2["Tiempo Promedio Salsa"]))
+            X_queso.append(0.5 * (met1["Tiempo Promedio Queso"] + met2["Tiempo Promedio Queso"]))
+            X_pepp.append(0.5 * (met1["Tiempo Promedio Pepperoni"] + met2["Tiempo Promedio Pepperoni"]))
+            X_carnes.append(0.5 * (met1["Tiempo Promedio Carnes"] + met2["Tiempo Promedio Carnes"]))
+            X_horno.append(0.5 * (met1["Tiempo Promedio Coccion"] + met2["Tiempo Promedio Coccion"]))
+            X_embal.append(0.5 * (met1["Tiempo Promedio Embalaje"] + met2["Tiempo Promedio Embalaje"]))
+            X_desp.append(0.5 * (met1["Tiempo Promedio Despacho"] + met2["Tiempo Promedio Despacho"]))
+            X_inter.append(0.5 * (met1["Tiempo Promedio Entre Llamadas"] + met2["Tiempo Promedio Entre Llamadas"]))
+            X_prem.append(0.5 * (met1["Proporcion Premium"] + met2["Proporcion Premium"]))
 
-            X_inter.append(
-                0.5 * (met1["Tiempo Promedio Entre Llamadas"] + met2["Tiempo Promedio Entre Llamadas"])
-            )
-
-            X_prem.append(
-                0.5 * (met1["Proporcion Premium"] + met2["Proporcion Premium"])
-            )
-
-
-        n_eff = n_pares
+        n_eff = n_pares  # número de estimadores Y (uno por par)
 
         rho_par = np.corrcoef(utils_1, utils_2)[0, 1]
         print("\n===== DIAGNÓSTICO ANTITÉTICAS =====")
@@ -1044,7 +1020,7 @@ def replicas_mixto(
         print("===================================\n")
 
     else:
-        # Réplicas independientes
+        # Réplicas independientes (sin antitéticas)
         for i in range(n_replicas):
             env = sp.Environment()
             p = Pizzeria(env)
@@ -1052,7 +1028,6 @@ def replicas_mixto(
             met = p.obtener_metricas()
 
             Y.append(met["Utilidad"])
-
             X_pizzas.append(met["Total Pizzas"])
 
             X_llam.append(met["Tiempo Promedio Llamada"])
@@ -1063,15 +1038,13 @@ def replicas_mixto(
             X_horno.append(met["Tiempo Promedio Coccion"])
             X_embal.append(met["Tiempo Promedio Embalaje"])
             X_desp.append(met["Tiempo Promedio Despacho"])
-
             X_inter.append(met["Tiempo Promedio Entre Llamadas"])
             X_prem.append(met["Proporcion Premium"])
 
+        n_eff = n_replicas  # número de estimadores Y (uno por réplica)
 
-        n_eff = n_replicas
-
-    Y = np.array(Y, dtype=float)
-
+    # Pasamos a arrays numpy
+    Y        = np.array(Y,        dtype=float)
     X_pizzas = np.array(X_pizzas, dtype=float)
     X_llam   = np.array(X_llam,   dtype=float)
     X_salsa  = np.array(X_salsa,  dtype=float)
@@ -1084,225 +1057,378 @@ def replicas_mixto(
     X_inter  = np.array(X_inter,  dtype=float)
     X_prem   = np.array(X_prem,   dtype=float)
 
+    # Estadísticos base sobre TODOS los Y (se usan cuando no hay VC)
+    media_simple_all = np.mean(Y)
+    s2_simple_all    = np.var(Y, ddof=1)
+    var_simple_all   = s2_simple_all / n_eff
+    sd_simple_all    = math.sqrt(var_simple_all)
 
-    # Caso base (sin VC) sobre estos estimadores (ya sea simples o antitéticos)
-    media_simple = np.mean(Y)
-    var_simple = np.var(Y, ddof=1) / n_eff
-    sd_simple = math.sqrt(var_simple)
-
-    if not usar_vc and not usar_antiteticas:
-        print("===== RESULTADOS BASE (sobre estimadores actuales) =====")
-        print(f"Número de estimadores      = {n_eff}")
-        print(f"Media estimador utilidad   = {media_simple:,.2f}")
-        print(f"Varianza del estimador    = {var_simple:,.2f}")
-        print(f"Desviación estándar       = {sd_simple:,.2f}")
-        print("========================================================\n")
-
+    # --------------------------------------------------------------
+    # 2) Caso SIN VC: devolvemos directamente estadísticos base
+    # --------------------------------------------------------------
     if not usar_vc:
+        # (Opcional: imprimir solo si quieres)
+        if not usar_antiteticas:
+            print("===== RESULTADOS BASE (sobre estimadores actuales) =====")
+            print(f"Número de estimadores      = {n_eff}")
+            print(f"Media estimador utilidad   = {media_simple_all:,.2f}")
+            print(f"s^2 (base)                 = {s2_simple_all:,.2f}")
+            print(f"Varianza del estimador     = {var_simple_all:,.2f}")
+            print(f"Desviación estándar        = {sd_simple_all:,.2f}")
+            print("========================================================\n")
+
         return {
-            "media": media_simple,
-            "varianza": var_simple,
-            "std": sd_simple,
+            "media": media_simple_all,   # media de Y
+            "s2": s2_simple_all,         # varianza muestral de Y
+            "varianza": var_simple_all,  # varianza del estimador
+            "std": sd_simple_all,
             "n_eff": n_eff,
         }
 
-        # --------------------------------------------------------------
-    # Variables de control con regresión múltiple
     # --------------------------------------------------------------
-    X = np.column_stack([
-        X_pizzas,  # VC1
-        X_llam,    # VC2
-        X_salsa,   # VC3
-        X_queso,   # VC4
-        X_pepp,    # VC5
-        X_carnes,  # VC6
-        X_horno,   # VC7
-        X_embal,   # VC8
-        X_desp,    # VC9
-        X_inter,   # VC10
-        X_prem,    # VC11
-    ])
+    # 3) CASO CON VC: usamos SOLO Total Pizzas como VC
+    # --------------------------------------------------------------
+    # Matriz X con una sola VC
+    X = X_pizzas.reshape(-1, 1)
 
-    # Medias teóricas en el MISMO orden que las columnas de X
-    E_X = medias_teoricas_VC(Pizzeria(sp.Environment()))
+    # Medias teóricas de las VC (vector largo, ya calculado)
+    E_X_full = medias_teoricas_VC(Pizzeria(sp.Environment()))
+    # Índice 0: Total Pizzas
+    E_X = np.array([E_X_full[0]])
 
-    # Centrado
-    X_centered = X - E_X
-    Y_centered = Y - np.mean(Y)
+    # ---------- División Calibración / Estimación ----------
+    n_calib = max(1, n_eff // 5)   # 1/5 para calibrar β
+    n_estim = n_eff - n_calib      # 4/5 para estimar la media
 
-    beta, *_ = np.linalg.lstsq(X_centered, Y_centered, rcond=None)
-    Y_control = Y - X_centered @ beta
+    if n_estim < 2:
+        n_calib = 0
+        n_estim = n_eff
+
+    # Partición
+    X_calib = X[:n_calib, :] if n_calib > 0 else None
+    Y_calib = Y[:n_calib]     if n_calib > 0 else None
+
+    X_estim = X[n_calib:, :]
+    Y_estim = Y[n_calib:]
+
+    # ---------- Cálculo de β usando SOLO CALIBRACIÓN ----------
+    if n_calib > 0:
+        Xc_calib = X_calib - E_X      # centrado con medias teóricas
+        Yc_calib = Y_calib - np.mean(Y_calib)
+        beta, *_ = np.linalg.lstsq(Xc_calib, Yc_calib, rcond=None)
+    else:
+        beta = np.zeros(X.shape[1])
+
+    # ---------- Aplicación de VC sobre réplicas de ESTIMACIÓN ----------
+    Xc_estim = X_estim - E_X
+    Y_control = Y_estim - Xc_estim @ beta
+
+    # Estadísticos base y con VC usando SOLO ESTIMACIÓN
+    media_simple_est = np.mean(Y_estim)
+    s2_simple_est    = np.var(Y_estim, ddof=1)
+    var_simple_est   = s2_simple_est / n_estim
+    sd_simple_est    = math.sqrt(var_simple_est)
 
     media_control = np.mean(Y_control)
-    var_control = np.var(Y_control, ddof=1) / n_eff
-    sd_control = math.sqrt(var_control)
+    s2_control    = np.var(Y_control, ddof=1)
+    var_control   = s2_control / n_estim
+    sd_control    = math.sqrt(var_control)
 
-    # ==============================================================
-    # DIAGNÓSTICO DE VARIABLES DE CONTROL (para 11 VC)
-    # ==============================================================
+    # --------------------------------------------------------------
+    # Diagnóstico VC (1 variable)
+    # --------------------------------------------------------------
+    print("\n===== VARIABLES DE CONTROL (1 VARIABLE) =====\n")
+    print(f"Número total de estimadores   = {n_eff}")
+    print(f"  Réplicas de calibración     = {n_calib}")
+    print(f"  Réplicas de estimación      = {n_estim}\n")
 
-    print("\n===== VARIABLES DE CONTROL (MÚLTIPLES, 11 VARIABLES) =====\n")
+    nombres_vc = ["Total Pizzas"]
 
-    nombres_vc = [
-        "Total Pizzas",
-        "Tiempo Llamada (min)",
-        "Tiempo Salsa (min)",
-        "Tiempo Queso (min)",
-        "Tiempo Pepperoni (min)",
-        "Tiempo Carnes (min)",
-        "Tiempo Cocción (min)",
-        "Tiempo Embalaje (min)",
-        "Tiempo Despacho (min)",
-        "Tiempo Entre Llamadas (hrs)",
-        "Proporción Premium",
-    ]
+    if n_calib > 1:
+        print("Correlación con la utilidad (CALIBRACIÓN):")
+        print("-------------------------------------------------------------")
+        Xj = X_calib[:, 0]
+        rho = np.corrcoef(Y_calib, Xj)[0, 1]
+        print(f"{nombres_vc[0]:30s}  ρ = {rho: .4f}")
+        print("-------------------------------------------------------------\n")
+    else:
+        print("No hay suficientes réplicas de calibración para correlaciones.\n")
 
-    # Calcular correlaciones con Y
-    corr_list = []
-    all_X_arrays = [
-        X_pizzas, X_llam, X_salsa, X_queso, X_pepp, X_carnes,
-        X_horno, X_embal, X_desp, X_inter, X_prem
-    ]
-
-    print("Correlaciones con la utilidad (estimadores Y):")
-    print("-------------------------------------------------------------")
-    for name, Xj in zip(nombres_vc, all_X_arrays):
-        rho = np.corrcoef(Y, Xj)[0, 1]
-        corr_list.append(rho)
-        print(f"{name:30s}  ρ = {rho: .4f}")
-    print("-------------------------------------------------------------\n")
-
-    # Mostrar medios teóricos y betas
     print("Medias teóricas usadas (E[Xj]):")
     print("-------------------------------------------------------------")
-    for name, Ej in zip(nombres_vc, E_X):
-        print(f"{name:30s}  E[X] = {Ej: .4f}")
+    print(f"{nombres_vc[0]:30s}  E[X] = {E_X[0]: .4f}")
     print("-------------------------------------------------------------\n")
 
-    print("Coeficientes β óptimos (regresión múltiple):")
+    print("Coeficientes β (calculados con CALIBRACIÓN):")
     print("-------------------------------------------------------------")
-    for name, bj in zip(nombres_vc, beta):
-        print(f"{name:30s}  β = {bj: .4f}")
+    print(f"{nombres_vc[0]:30s}  β = {beta[0]: .4f}")
     print("-------------------------------------------------------------\n")
 
-    # ===================== RESULTADOS FINALES =====================
-    print("RESULTADOS CON VARIABLES DE CONTROL (11 VC):")
+    print("RESULTADOS (solo réplicas de ESTIMACIÓN):")
     print("-------------------------------------------------------------")
-    print(f"  Media estimador utilidad     = {media_control:,.2f}")
-    print(f"  Varianza del estimador       = {var_control:,.2f}")
-    print(f"  Desviación estándar          = {sd_control:,.2f}\n")
+    print(f"  Media simple (sin VC)       = {media_simple_est:,.2f}")
+    print(f"  s^2 simple                  = {s2_simple_est:,.2f}")
+    print(f"  Varianza simple             = {var_simple_est:,.2f}")
+    print(f"  Desviación estándar simple  = {sd_simple_est:,.2f}\n")
 
-    if var_simple > 0 and var_control > 0:
-        reduccion = (var_simple - var_control) / var_simple * 100
-        factor = var_simple / var_control
+    print("RESULTADOS CON VARIABLES DE CONTROL (1 VC):")
+    print("-------------------------------------------------------------")
+    print(f"  Media ajustada              = {media_control:,.2f}")
+    print(f"  s^2 ajustada                = {s2_control:,.2f}")
+    print(f"  Varianza ajustada           = {var_control:,.2f}")
+    print(f"  Desviación estándar ajustada= {sd_control:,.2f}\n")
+
+    if var_simple_est > 0 and var_control > 0:
+        reduccion = (var_simple_est - var_control) / var_simple_est * 100
+        factor = var_simple_est / var_control
         print(f"  ✓ Reducción de varianza      = {reduccion:.2f}%")
         print(f"  ✓ Factor de reducción        = {factor:.2f}x")
     print("==============================================================\n")
 
-
     return {
-        "media_simple": media_simple,
-        "var_simple": var_simple,
-        "sd_simple": sd_simple,
+        # Estimador simple (sin VC), usando SOLO ESTIMACIÓN
+        "media_simple": media_simple_est,
+        "s2_simple": s2_simple_est,
+        "var_simple": var_simple_est,
+        "sd_simple": sd_simple_est,
+
+        # Estimador con VC
         "media_control": media_control,
+        "s2_control": s2_control,
         "var_control": var_control,
         "sd_control": sd_control,
+
         "beta": beta,
-        "n_eff": n_eff,
+        "n_eff": n_eff,      # total de estimadores Y
+        "n_calib": n_calib,
+        "n_estim": n_estim,  # estimadores usados en VC
     }
 
+# ======================================================================
+# MAIN: resumen global para N = 50, 100, 200
+# ======================================================================
+
 if __name__ == "__main__":
-    TIEMPO = 168        # 1 semana
-    N = 100             # número de réplicas
-    print("\n======================================================")
-    print("EJECUTANDO COMPARACIÓN COMPLETA DE MÉTODOS")
-    print("======================================================\n")
+    TIEMPO = 168          # 1 semana
+    Ns = [50, 100, 200]   # diferentes números de réplicas totales
 
-    # ---------------------------------------------------------
-    # 1) CASO BASE (sin antitéticas, sin VC)
-    # ---------------------------------------------------------
-    print("\n### CASO BASE ###\n")
-    base = replicas_mixto(
-        n_replicas=N,
-        tiempo_horas=TIEMPO,
-        usar_antiteticas=False,
-        usar_vc=False
-    )
+    # Guardamos todos los resultados en una lista de diccionarios
+    resumen = []
 
-    media_base = base["media"]
-    var_base = base["varianza"]
-    sd_base = base["std"]
+    for N in Ns:
+        # ---------------------------------------------------------
+        # 1) CASO BASE (sin antitéticas, sin VC)
+        # ---------------------------------------------------------
+        base = replicas_mixto(
+            n_replicas=N,
+            tiempo_horas=TIEMPO,
+            usar_antiteticas=False,
+            usar_vc=False
+        )
 
-    print(f"Media caso base       = {media_base:,.2f}")
-    print(f"Varianza caso base    = {var_base:,.2f}")
-    print(f"Desv. estándar base   = {sd_base:,.2f}")
-    print("------------------------------------------------------\n")
+        media_base = base["media"]
+        s2_base    = base["s2"]
+        var_base   = base["varianza"]
+        n_eff_base = base["n_eff"]   # debería ser N
 
-    # ---------------------------------------------------------
-    # 2) SOLO VC (múltiples variables de control)
-    # ---------------------------------------------------------
-    print("\n### SOLO VARIABLES DE CONTROL (sin antitéticas) ###\n")
-    vc_solo = replicas_mixto(
-        n_replicas=N,
-        tiempo_horas=TIEMPO,
-        usar_antiteticas=False,
-        usar_vc=True
-    )
+        resumen.append({
+            "N": N,
+            "Metodo": "Base",
+            "n_eff": n_eff_base,
+            "Media": media_base,
+            "s2": s2_base,
+            "Var_est": var_base,
+            "Base_s2_mismo_neff": s2_base,
+            "Base_Var_mismo_neff": var_base,
+            "Red_vs_ref": 0.0,          # por definición
+            "Red_vs_base": 0.0,         # por definición
+            "Referencia": "—"
+        })
 
-    media_vc = vc_solo["media_control"]
-    var_vc = vc_solo["var_control"]
+        # ---------------------------------------------------------
+        # 2) SOLO VARIABLES DE CONTROL (sin antitéticas)
+        #    Comparación vs base con el mismo n_eff (n_estim)
+        # ---------------------------------------------------------
+        vc_solo = replicas_mixto(
+            n_replicas=N,
+            tiempo_horas=TIEMPO,
+            usar_antiteticas=False,
+            usar_vc=True
+        )
 
-    print(f"Media VC              = {media_vc:,.2f}")
-    print(f"Varianza VC           = {var_vc:,.2f}")
-    print(f"Reducción vs base     = {(var_base - var_vc) / var_base * 100:,.2f}%")
-    print("------------------------------------------------------\n")
+        media_vc = vc_solo["media_control"]
+        s2_vc    = vc_solo["s2_control"]
+        var_vc   = vc_solo["var_control"]
+        n_eff_vc = vc_solo["n_estim"]      # réplicas efectivas usadas en el estimador
 
-    # ---------------------------------------------------------
-    # 3) SOLO ANTITÉTICAS
-    # ---------------------------------------------------------
-    print("\n### SOLO ANTITÉTICAS ###\n")
-    anti = replicas_mixto(
-        n_replicas=N,
-        tiempo_horas=TIEMPO,
-        usar_antiteticas=True,
-        usar_vc=False
-    )
+        # Base "justo" interno: estos vienen del estimador simple con mismo n_eff
+        s2_base_vc  = vc_solo["s2_simple"]
+        var_base_vc = vc_solo["var_simple"]
+        reduccion_vc = (var_base_vc - var_vc) / var_base_vc * 100
 
-    media_anti = anti["media"]
-    var_anti = anti["varianza"]
+        resumen.append({
+            "N": N,
+            "Metodo": "VC",
+            "n_eff": n_eff_vc,
+            "Media": media_vc,
+            "s2": s2_vc,
+            "Var_est": var_vc,
+            "Base_s2_mismo_neff": s2_base_vc,
+            "Base_Var_mismo_neff": var_base_vc,
+            "Red_vs_ref": reduccion_vc,     # vs Base (mismo n_eff)
+            "Red_vs_base": reduccion_vc,    # aquí el ref es base, así que coincide
+            "Referencia": "Base (mismo n_eff)"
+        })
 
-    print(f"Media Antitéticas     = {media_anti:,.2f}")
-    print(f"Varianza Antitéticas  = {var_anti:,.2f}")
-    print(f"Reducción vs base     = {(var_base - var_anti) / var_base * 100:,.2f}%")
-    print("------------------------------------------------------\n")
+        # ---------------------------------------------------------
+        # 3) SOLO ANTITÉTICAS
+        #    Comparación vs base con el mismo n_eff = N/2
+        # ---------------------------------------------------------
+        anti = replicas_mixto(
+            n_replicas=N,
+            tiempo_horas=TIEMPO,
+            usar_antiteticas=True,
+            usar_vc=False
+        )
 
-    # ---------------------------------------------------------
-    # 4) ANTITÉTICAS + MULTI VC
-    # ---------------------------------------------------------
-    print("\n### ANTITÉTICAS + MULTI VC ###\n")
-    mix = replicas_mixto(
-        n_replicas=N,
-        tiempo_horas=TIEMPO,
-        usar_antiteticas=True,
-        usar_vc=True
-    )
+        media_anti = anti["media"]
+        s2_anti    = anti["s2"]
+        var_anti   = anti["varianza"]
+        n_eff_anti = anti["n_eff"]      # número de pares = N/2
 
-    media_mix = mix["media_control"]
-    var_mix = mix["var_control"]
+        # Base "justo" con el mismo n_eff que antitéticas
+        base_anti = replicas_mixto(
+            n_replicas=n_eff_anti,
+            tiempo_horas=TIEMPO,
+            usar_antiteticas=False,
+            usar_vc=False
+        )
+        s2_base_anti  = base_anti["s2"]
+        var_base_anti = base_anti["varianza"]
 
-    print(f"Media Mixto           = {media_mix:,.2f}")
-    print(f"Varianza Mixto        = {var_mix:,.2f}")
-    print(f"Reducción vs base     = {(var_base - var_mix) / var_base * 100:,.2f}%")
-    print("------------------------------------------------------\n")
+        reduccion_anti = (var_base_anti - var_anti) / var_base_anti * 100
 
-    # ---------------------------------------------------------
-    # RESUMEN FINAL
-    # ---------------------------------------------------------
-    print("\n================= RESUMEN FINAL =================")
-    print(f"Base:                Var = {var_base:,.2f}")
-    print(f"VC solo:             Var = {var_vc:,.2f}   ({(var_base - var_vc)/var_base*100:,.2f}% ↓)")
-    print(f"Antitéticas:         Var = {var_anti:,.2f} ({(var_base - var_anti)/var_base*100:,.2f}% ↓)")
-    print(f"Antitéticas + VC:    Var = {var_mix:,.2f}  ({(var_base - var_mix)/var_base*100:,.2f}% ↓)")
-    print("=====================================================\n")
+        resumen.append({
+            "N": N,
+            "Metodo": "Antitéticas",
+            "n_eff": n_eff_anti,
+            "Media": media_anti,
+            "s2": s2_anti,
+            "Var_est": var_anti,
+            "Base_s2_mismo_neff": s2_base_anti,
+            "Base_Var_mismo_neff": var_base_anti,
+            "Red_vs_ref": reduccion_anti,    # vs Base (mismo n_eff)
+            "Red_vs_base": reduccion_anti,   # referencia absoluta también es base
+            "Referencia": "Base (mismo n_eff)"
+        })
 
+        # ---------------------------------------------------------
+        # 4) ANTITÉTICAS + VC
+        #    - Comparación incremental vs "solo antitéticas" (mismo n_eff)
+        #    - Reducción TOTAL vs base con el mismo n_eff final
+        # ---------------------------------------------------------
+        mix = replicas_mixto(
+            n_replicas=N,
+            tiempo_horas=TIEMPO,
+            usar_antiteticas=True,
+            usar_vc=True
+        )
+
+        media_mix = mix["media_control"]
+        s2_mix    = mix["s2_control"]
+        var_mix   = mix["var_control"]
+        n_eff_mix = mix["n_estim"]      # n_eff efectivo del estimador final
+
+        # Reducción incremental vs Antitéticas (mismo n_eff de estimación)
+        var_anti_mismo_n = mix["var_simple"]  # antitéticas sin VC, mismo n_estim
+        reduccion_incremental = (var_anti_mismo_n - var_mix) / var_anti_mismo_n * 100
+
+        # ✅ Reducción TOTAL vs Base (mismo n_eff final)
+        base_mix = replicas_mixto(
+            n_replicas=n_eff_mix,
+            tiempo_horas=TIEMPO,
+            usar_antiteticas=False,
+            usar_vc=False
+        )
+        s2_base_mix  = base_mix["s2"]
+        var_base_mix = base_mix["varianza"]
+
+        reduccion_total = (var_base_mix - var_mix) / var_base_mix * 100
+
+        resumen.append({
+            "N": N,
+            "Metodo": "Antitéticas + VC",
+            "n_eff": n_eff_mix,
+            "Media": media_mix,
+            "s2": s2_mix,
+            "Var_est": var_mix,
+            "Base_s2_mismo_neff": s2_base_mix,
+            "Base_Var_mismo_neff": var_base_mix,
+            "Red_vs_ref": reduccion_incremental,    # vs Antitéticas
+            "Red_vs_base": reduccion_total,         # vs Base (mismo n_eff final)
+            "Referencia": "Ref: Anti(mismo n_eff), Base(mismo n_eff)"
+        })
+
+    # -----------------------------------------------------------------
+    # IMPRESIÓN DEL RESUMEN GLOBAL
+    # -----------------------------------------------------------------
+    print("\n==================== RESUMEN GLOBAL ====================\n")
+
+    for N in Ns:
+        print(f"\n-------------------- N = {N} --------------------")
+        print(
+            f"{'Método':18s} "
+            f"{'n_eff':>7s} "
+            f"{'Media':>13s} "
+            f"{'s^2':>13s} "
+            f"{'Var(est)':>13s} "
+            f"{'Base s^2':>13s} "
+            f"{'Base Var':>13s} "
+            f"{'Red.Ref%':>9s} "
+            f"{'Red.Base%':>10s}  Ref"
+        )
+        print("-" * 140)
+        for row in resumen:
+            if row["N"] == N:
+                print(
+                    f"{row['Metodo']:18s} "
+                    f"{row['n_eff']:7d} "
+                    f"{row['Media']:13,.2f} "
+                    f"{row['s2']:13,.2f} "
+                    f"{row['Var_est']:13,.2f} "
+                    f"{row['Base_s2_mismo_neff']:13,.2f} "
+                    f"{row['Base_Var_mismo_neff']:13,.2f} "
+                    f"{row['Red_vs_ref']:9.2f} "
+                    f"{row['Red_vs_base']:10.2f}  "
+                    f"{row['Referencia']}"
+                )
+        print("-" * 140)
+
+    print("\n========================================================\n")
+
+    # -----------------------------------------------------------------
+    # EXPORTAR A CSV
+    # -----------------------------------------------------------------
+    csv_filename = "resumen_resultados_parte2.csv"
+    fieldnames = [
+        "N",
+        "Metodo",
+        "n_eff",
+        "Media",
+        "s2",
+        "Var_est",
+        "Base_s2_mismo_neff",
+        "Base_Var_mismo_neff",
+        "Red_vs_ref",
+        "Red_vs_base",
+        "Referencia",
+    ]
+
+    with open(csv_filename, mode="w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in resumen:
+            writer.writerow(row)
+
+    print(f"Resumen exportado a '{csv_filename}'\n")
 
