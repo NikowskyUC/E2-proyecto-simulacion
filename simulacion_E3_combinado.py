@@ -4,9 +4,8 @@ import math
 from scipy.stats import norm, gamma as gamma_dist, triang, nbinom
 
 logs = True
-tiempo_simulacion = 168  # horas
+tiempo_simulacion = 168 # horas
 numero_replicas = 1
-
 
 class Pizzeria:
 
@@ -34,44 +33,35 @@ class Pizzeria:
         self.repartidores = sp.PriorityResource(env, capacity=self.cantidad_repartidores)
 
         # Inventarios
-        self.salsa_de_tomate = sp.Container(env, init=15000, capacity=15000)  # continuo: ml
-        self.queso_mozzarella = sp.Container(env, init=1000, capacity=1000)  # discreto: unidades
-        self.pepperoni = sp.Container(env, init=800, capacity=800)  # discreto: unidades
-        self.mix_carnes = sp.Container(env, init=600, capacity=600)  # discreto: unidades
+        # NOTA: Conceptualmente salsa es continua (ml) y los demás son discretos (unidades)
+        # Sin embargo, usamos Container para todos por eficiencia de simulación
+        # Al reponer inventarios discretos, redondeamos la cantidad
+        self.salsa_de_tomate = sp.Container(env, init=15000, capacity=15000) # continuo: ml
+        self.queso_mozzarella = sp.Container(env, init=1000, capacity=1000) # discreto: unidades
+        self.pepperoni = sp.Container(env, init=800, capacity=800) # discreto: unidades  
+        self.mix_carnes = sp.Container(env, init=600, capacity=600) # discreto: unidades
 
-        self.inventarios = [
-            self.salsa_de_tomate,
-            self.queso_mozzarella,
-            self.pepperoni,
-            self.mix_carnes,
-        ]
-        self.nombres_inventarios = {
-            self.salsa_de_tomate: 'salsa de tomate',
-            self.queso_mozzarella: 'queso mozzarella',
-            self.pepperoni: 'pepperoni',
-            self.mix_carnes: 'mix de carnes',
-        }
+        self.inventarios = [self.salsa_de_tomate, self.queso_mozzarella,
+                       self.pepperoni, self.mix_carnes]
+        self.nombres_inventarios = {self.salsa_de_tomate: 'salsa de tomate',
+                                    self.queso_mozzarella: 'queso mozzarella',
+                                    self.pepperoni: 'pepperoni',
+                                    self.mix_carnes: 'mix de carnes'}
         self.en_reposicion = {inventario: False for inventario in self.inventarios}
-        self.umbral_reposicion = {
-            self.salsa_de_tomate: 3000,
-            self.queso_mozzarella: 200,
-            self.pepperoni: 300,
-            self.mix_carnes: 100,
-        }
-
-        # Inventarios discretos (para redondear en reposición)
-        self.inventarios_discretos = {
-            self.queso_mozzarella,
-            self.pepperoni,
-            self.mix_carnes,
-        }
+        self.umbral_reposicion = {self.salsa_de_tomate: 3000,
+                                  self.queso_mozzarella: 200,
+                                  self.pepperoni: 300,
+                                  self.mix_carnes: 100}
+        
+        # Inventarios que son conceptualmente discretos (para redondear en reposición)
+        self.inventarios_discretos = {self.queso_mozzarella, self.pepperoni, self.mix_carnes}
 
         # Ingresos
         self.precio_pizza_queso = 7000
         self.precio_pizza_pepperoni = 9000
         self.precio_pizza_mix_carnes = 12000
 
-        # Costos variables por pizza
+        # Costos
         self.costo_pizza_queso = 7000 * 0.3
         self.costo_pizza_pepperoni = 9000 * 0.3
         self.costo_pizza_mix_carnes = 12000 * 0.3
@@ -80,203 +70,144 @@ class Pizzeria:
         self.costo_hora_trabajador = 4000
         self.costo_hora_repartidor = 3000
 
-        # Costos fijos semanales (por capacidad instalada)
-        self.costo_fijo_lineas_telefonicas = 50000 * 3  # semanal
-        self.costo_fijo_espacio_preparacion = 60000 * 3  # semanal
-        self.costo_fijo_horno = 40000 * 10  # semanal
-        self.costo_fijo_embalaje = 30000 * 3  # semanal
-        self.costos_fijos_semanales = (
-            self.costo_fijo_lineas_telefonicas
-            + self.costo_fijo_espacio_preparacion
-            + self.costo_fijo_horno
-            + self.costo_fijo_embalaje
-        )
-
+        self.costo_fijo_lineas_telefonicas = 50000 * 3 # semanal
+        self.costo_fijo_espacio_preparacion = 60000 * 3# semanal
+        self.costo_fijo_horno = 40000 * 10 # semanal
+        self.costo_fijo_embalaje = 30000 * 3 # semanal
+        self.costos_fijos_semanales = (self.costo_fijo_lineas_telefonicas +
+                                     self.costo_fijo_espacio_preparacion +
+                                     self.costo_fijo_horno +
+                                     self.costo_fijo_embalaje)
+        
         # Es actualmente fin de semana?
         self.finde = False
-
+        
         # Tasas de llegada de llamadas
-        self.tasas_dia_normal = {
-            10: 2,
-            11: 6,
-            12: 12,
-            13: 20,
-            14: 12,
-            15: 14,
-            16: 12,
-            17: 10,
-            18: 9,
-            19: 8,
-            20: 6,
-            21: 4,
-        }
-
-        self.tasas_finde = {
-            10: 2,
-            11: 8,
-            12: 18,
-            13: 25,
-            14: 25,
-            15: 24,
-            16: 18,
-            17: 12,
-            18: 11,
-            19: 10,
-            20: 9,
-            21: 8,
-            22: 6,
-            23: 4,
-        }
+        self.tasas_dia_normal ={10: 2,
+                                11: 6,
+                                12: 12,
+                                13: 20,
+                                14: 12,
+                                15: 14,
+                                16: 12,
+                                17: 10,
+                                18: 9,
+                                19: 8,
+                                20: 6,
+                                21: 4}
+        
+        self.tasas_finde = {10: 2,
+                            11: 8,
+                            12: 18,
+                            13: 25,
+                            14: 25,
+                            15: 24,
+                            16: 18,
+                            17: 12,
+                            18: 11,
+                            19: 10,
+                            20: 9,
+                            21: 8,
+                            22: 6,
+                            23: 4}
 
         # Medidas auxiliares
         self.llamadas_totales = 0
         self.llamadas_perdidas = 0
         self.pedidos_normales_totales = 0
         self.pedidos_premium_totales = 0
-
+        
         self.pedidos_tardios_normales_finde = 0
         self.pedidos_tardios_normales_semana = 0
         self.pedidos_tardios_premium_finde = 0
         self.pedidos_tardios_premium_semana = 0
-
+        
         self.tiempos_procesamiento_normales_finde = []
         self.tiempos_procesamiento_normales_semana = []
         self.tiempos_procesamiento_premium_finde = []
         self.tiempos_procesamiento_premium_semana = []
-
+        
         self.pizzas_queso = 0
         self.pizzas_pepperoni = 0
         self.pizzas_carnes = 0
-
+        
         self.compensacion = 0
-
+        
         self.horas_extras = 0
-        self.ultima_hora_fin_por_dia = {}  # día -> hora fin último pedido
-
-        self.ingresos = 0
-        self.costos = 0
+        # Última hora de finalización por día (day -> hora del día en que terminó el último pedido)
+        self.ultima_hora_fin_por_dia = {}
+        
+        self.ingresos = 0 
+        
+        self.costos = 0 
 
         self.salario_hora_empleado = 4000
         self.salario_hora_repartidor = 3000
         self.horas_trabajo_dia_normal = 13
-        self.horas_trabajo_finde = 15
-
+        self.horas_trabajo_finde = 15 
+        
+        
         # Métricas
         self.proporcion_llamadas_perdidas = 0
+        
         self.proporcion_pedidos_tardios_normales_finde = 0
         self.proporcion_pedidos_tardios_normales_semana = 0
         self.proporcion_pedidos_tardios_premium_finde = 0
         self.proporcion_pedidos_tardios_premium_semana = 0
+        
         self.tiempo_promedio_procesamiento_normales_finde = 0
         self.tiempo_promedio_procesamiento_normales_semana = 0
         self.tiempo_promedio_procesamiento_premium_finde = 0
         self.tiempo_promedio_procesamiento_premium_semana = 0
-
+        
         self.utilidad = self.ingresos - self.costos
+        
+        # Variables de control: registrar tiempos individuales de TODAS las operaciones
+        self.tiempos_llamada = []  # xi_1 para llamadas (Exp(250s))
+        self.tiempos_salsa = []    # gamma_1 para poner salsa (Beta)
+        self.tiempos_queso = []    # gamma_2 para poner queso (Triangular)
+        self.tiempos_pepperoni = []  # gamma_3 para poner pepperoni (Lognormal)
+        self.tiempos_carnes = []   # gamma_4 para poner carnes (Uniform)
+        self.tiempos_horno = []    # delta para hornear (Lognormal)
+        self.tiempos_embalaje = [] # epsilon para embalar (Triangular)
+        self.tiempos_despacho = [] # tiempo ida al domicilio (Gamma)
+        
+        # Variables adicionales de control con media teórica conocida
+        self.tiempos_entre_llamadas = []  # Para calcular promedio de tiempos entre llegadas
 
-    def iniciar_simulacion(
-        self,
-        tiempo_horas,
-        seed,
-        logs=False,
-        uniformes_coccion=None,
-        uniformes_despacho_ida=None,
-        uniformes_despacho_vuelta=None,
-        uniformes_llamada=None,
-        uniformes_cantidad_queso=None,
-        uniformes_tiempo_queso=None,
-        uniformes_premium=None,
-        uniformes_num_pizzas=None,
-        uniformes_tipo_pizza=None,
-        uniformes_tiempo_salsa=None,
-        uniformes_cantidad_salsa=None,
-        uniformes_tiempo_pepperoni=None,
-        uniformes_cantidad_pepperoni=None,
-        uniformes_tiempo_carnes=None,
-        uniformes_cantidad_carnes=None,
-        uniformes_tiempo_embalaje=None,
-        uniformes_interarrival=None,  # 🔹 NUEVO: interarrivals
-    ):
-        self.tiempo_limite = tiempo_horas + 10  # simulación empieza a las 10 AM
+    
+    def iniciar_simulacion(self, tiempo_horas, seed, logs=False, uniformes_coccion=None, uniformes_despacho_ida=None, uniformes_despacho_vuelta=None, uniformes_llamada=None, uniformes_cantidad_queso=None, uniformes_tiempo_queso=None):
+        self.tiempo_limite = tiempo_horas + 10 # Se suma 10 para iniciar simulacion a las 10 AM
         self.logs = logs
         self.log_data = ''
 
         self.rng = np.random.default_rng(seed)
-
-        # Streams de uniformes (algunos usados para VR / CRN)
+        
+        # Variables antitéticas: listas de números uniformes pre-generados
         self.uniformes_coccion = uniformes_coccion if uniformes_coccion is not None else []
         self.uniformes_despacho_ida = uniformes_despacho_ida if uniformes_despacho_ida is not None else []
-        self.uniformes_despacho_vuelta = (
-            uniformes_despacho_vuelta if uniformes_despacho_vuelta is not None else []
-        )
+        self.uniformes_despacho_vuelta = uniformes_despacho_vuelta if uniformes_despacho_vuelta is not None else []
         self.uniformes_llamada = uniformes_llamada if uniformes_llamada is not None else []
-        self.uniformes_cantidad_queso = (
-            uniformes_cantidad_queso if uniformes_cantidad_queso is not None else []
-        )
-        self.uniformes_tiempo_queso = (
-            uniformes_tiempo_queso if uniformes_tiempo_queso is not None else []
-        )
-        self.uniformes_premium = uniformes_premium if uniformes_premium is not None else []
-        self.uniformes_num_pizzas = (
-            uniformes_num_pizzas if uniformes_num_pizzas is not None else []
-        )
-        self.uniformes_tipo_pizza = uniformes_tipo_pizza if uniformes_tipo_pizza is not None else []
-        self.uniformes_tiempo_salsa = (
-            uniformes_tiempo_salsa if uniformes_tiempo_salsa is not None else []
-        )
-        self.uniformes_cantidad_salsa = (
-            uniformes_cantidad_salsa if uniformes_cantidad_salsa is not None else []
-        )
-        self.uniformes_tiempo_pepperoni = (
-            uniformes_tiempo_pepperoni if uniformes_tiempo_pepperoni is not None else []
-        )
-        self.uniformes_cantidad_pepperoni = (
-            uniformes_cantidad_pepperoni if uniformes_cantidad_pepperoni is not None else []
-        )
-        self.uniformes_tiempo_carnes = (
-            uniformes_tiempo_carnes if uniformes_tiempo_carnes is not None else []
-        )
-        self.uniformes_cantidad_carnes = (
-            uniformes_cantidad_carnes if uniformes_cantidad_carnes is not None else []
-        )
-        self.uniformes_tiempo_embalaje = (
-            uniformes_tiempo_embalaje if uniformes_tiempo_embalaje is not None else []
-        )
-
-        # 🔹 Nuevo stream para tiempos entre llamadas (antitéticas)
-        self.uniformes_interarrival = (
-            uniformes_interarrival if uniformes_interarrival is not None else []
-        )
-
-        # Índices para cada stream
+        self.uniformes_cantidad_queso = uniformes_cantidad_queso if uniformes_cantidad_queso is not None else []
+        self.uniformes_tiempo_queso = uniformes_tiempo_queso if uniformes_tiempo_queso is not None else []
+        
+        # Contadores para indexar las variables antitéticas
         self.idx_coccion = 0
         self.idx_despacho_ida = 0
         self.idx_despacho_vuelta = 0
         self.idx_llamada = 0
         self.idx_cantidad_queso = 0
         self.idx_tiempo_queso = 0
-        self.idx_premium = 0
-        self.idx_num_pizzas = 0
-        self.idx_tipo_pizza = 0
-        self.idx_tiempo_salsa = 0
-        self.idx_cantidad_salsa = 0
-        self.idx_tiempo_pepperoni = 0
-        self.idx_cantidad_pepperoni = 0
-        self.idx_tiempo_carnes = 0
-        self.idx_cantidad_carnes = 0
-        self.idx_tiempo_embalaje = 0
-        self.idx_interarrival = 0  # 🔹 índice nuevo
 
         if self.logs:
             self.log(f'Iniciando simulación por {tiempo_horas} horas con semilla {seed}')
+        
 
         self.ultima_atencion = None
         self.evento_termino_simulacion = self.env.event()
-        self.pedidos_activos = []
+        self.pedidos_activos = []  # Lista para rastrear todos los pedidos en proceso
 
-        self.evento_inventario_repuesto = {
-            inventario: self.env.event() for inventario in self.inventarios
-        }
+        self.evento_inventario_repuesto = {inventario: self.env.event() for inventario in self.inventarios}
 
         self.env.process(self.llegada_llamadas())
         self.env.process(self.temporizador_revision_salsa())
@@ -285,36 +216,20 @@ class Pizzeria:
         try:
             self.env.run(until=self.evento_termino_simulacion)
         except RuntimeError:
+            # Si no hay más eventos programados, la simulación termina naturalmente
             if self.logs:
                 self.log('Simulación terminó sin eventos pendientes.')
 
         if self.logs:
             self.log('Simulación terminada.')
             self.log(f'Tiempo de simulación: {self.env.now - 10} horas')
-
-    # ============================================================
-    # Helper para tiempos entre llamadas con antitéticas
-    # ============================================================
-    def _exp_interarrival(self, tasa):
-        """
-        Genera un tiempo ~ Exponencial(λ = tasa) usando:
-        - uniformes_interarrival (si disponible)
-        - rng.exponential(1/tasa) como fallback
-        """
-        if self.idx_interarrival < len(self.uniformes_interarrival):
-            u = self.uniformes_interarrival[self.idx_interarrival]
-            self.idx_interarrival += 1
-            # Evitar log(0) por si u es exactamente 1.0
-            if u >= 1.0:
-                u = np.nextafter(1.0, 0.0)
-            return -math.log(1 - u) / tasa
-        else:
-            return self.rng.exponential(1 / tasa)
-
+    
+    
+    
     def obtener_metricas(self):
         # Calculamos métricas
 
-        # Horas extra por día
+        # Calcular horas extras una vez por día usando la última finalización registrada
         self.horas_extras = 0
         for dia, hora_fin in self.ultima_hora_fin_por_dia.items():
             es_finde = (dia % 7) in [5, 6]
@@ -323,21 +238,21 @@ class Pizzeria:
             elif (not es_finde) and (hora_fin > 23 or hora_fin < 10):
                 self.horas_extras += (hora_fin - 23) if hora_fin > 23 else (hora_fin + 1)
 
-        # Horas de simulación efectivas
+        # Calcular horas de jornada efectivas durante la simulación
+        # Nota: self.tiempo_limite se definió como tiempo_horas + 10 en iniciar_simulacion
         tiempo_simulacion_horas = getattr(self, 'tiempo_limite', 10) - 10
         horas_normales = self.calcular_horas_normales(tiempo_simulacion_horas)
         horas_finde = self.calcular_horas_finde(tiempo_simulacion_horas)
         horas_jornada_total = horas_normales + horas_finde
 
-        # Semanas completas (redondeo hacia arriba)
+        # Semanas completas (redondeo hacia arriba). Si el tiempo_horas es 0 -> 0 semanas
         semanas = int(math.ceil(tiempo_simulacion_horas / 168.0)) if tiempo_simulacion_horas > 0 else 0
 
-        costo_trabajadores = (
-            self.salario_hora_empleado * horas_jornada_total * self.cantidad_trabajadores
-        )
-        costo_repartidores = (
-            self.salario_hora_repartidor * horas_jornada_total * self.cantidad_repartidores
-        )
+        # Costos por salario: asumir que cada trabajador/repartidor está contratado
+        # para cubrir la jornada completa (modelo previo), por lo que multiplicamos
+        # horas_jornada_total por la cantidad de empleados.
+        costo_trabajadores = self.salario_hora_empleado * horas_jornada_total * self.cantidad_trabajadores
+        costo_repartidores = self.salario_hora_repartidor * horas_jornada_total * self.cantidad_repartidores
 
         self.costos = (
             10_000 * self.llamadas_perdidas
@@ -352,72 +267,28 @@ class Pizzeria:
             + 1.4 * self.salario_hora_repartidor * self.horas_extras * self.cantidad_repartidores
         )
 
-        self.proporcion_llamadas_perdidas = (
-            self.llamadas_perdidas / self.llamadas_totales if self.llamadas_totales > 0 else 0
-        )
+        self.proporcion_llamadas_perdidas = self.llamadas_perdidas / self.llamadas_totales
+        
+        self.proporcion_pedidos_tardios_normales = (self.pedidos_tardios_normales_finde + self.pedidos_tardios_normales_semana) / self.pedidos_normales_totales
+        self.proporcion_pedidos_tardios_premium = (self.pedidos_tardios_premium_finde + self.pedidos_tardios_premium_semana) / self.pedidos_premium_totales
 
-        if self.pedidos_normales_totales > 0:
-            self.proporcion_pedidos_tardios_normales = (
-                self.pedidos_tardios_normales_finde + self.pedidos_tardios_normales_semana
-            ) / self.pedidos_normales_totales
-        else:
-            self.proporcion_pedidos_tardios_normales = 0
 
-        if self.pedidos_premium_totales > 0:
-            self.proporcion_pedidos_tardios_premium = (
-                self.pedidos_tardios_premium_finde + self.pedidos_tardios_premium_semana
-            ) / self.pedidos_premium_totales
-        else:
-            self.proporcion_pedidos_tardios_premium = 0
-
-        total_pedidos = self.pedidos_normales_totales + self.pedidos_premium_totales
-        if total_pedidos > 0:
-            self.proporcion_pedidos_tardios = (
-                self.pedidos_tardios_normales_finde
-                + self.pedidos_tardios_normales_semana
-                + self.pedidos_tardios_premium_finde
-                + self.pedidos_tardios_premium_semana
-            ) / total_pedidos
-        else:
-            self.proporcion_pedidos_tardios = 0
-
-        # Helper para aplanar tiempos
-        def procesar_tiempos(lista):
-            resultado = []
-            for item in lista:
-                if isinstance(item, (list, tuple, np.ndarray)):
-                    resultado.extend(procesar_tiempos(item))
-                elif item is not None:
-                    resultado.append(float(item))
-            return resultado
-
-        tiempos_normales_flat = procesar_tiempos(
-            self.tiempos_procesamiento_normales_semana + self.tiempos_procesamiento_normales_finde
-        )
-        self.tiempo_promedio_procesamiento_normales = (
-            np.mean(tiempos_normales_flat) * 60 if tiempos_normales_flat else 0
-        )
-
-        tiempos_premium_flat = procesar_tiempos(
-            self.tiempos_procesamiento_premium_finde
-            + self.tiempos_procesamiento_premium_semana
-        )
-        self.tiempo_promedio_procesamiento_premium = (
-            np.mean(tiempos_premium_flat) * 60 if tiempos_premium_flat else 0
-        )
-
-        tiempos_todos_flat = procesar_tiempos(
-            self.tiempos_procesamiento_premium_semana
-            + self.tiempos_procesamiento_premium_finde
-            + self.tiempos_procesamiento_normales_semana
-            + self.tiempos_procesamiento_normales_finde
-        )
-        self.tiempo_promedio_procesamiento = (
-            np.mean(tiempos_todos_flat) * 60 if tiempos_todos_flat else 0
-        )
-
+        self.proporcion_pedidos_tardios = (self.pedidos_tardios_normales_finde + self.pedidos_tardios_normales_semana + self.pedidos_tardios_premium_finde + self.pedidos_tardios_premium_semana) / (self.pedidos_normales_totales + self.pedidos_premium_totales)
+        
+        # Tiempos en minutos
+        self.tiempo_promedio_procesamiento_normales = np.mean(self.tiempos_procesamiento_normales_semana + self.tiempos_procesamiento_normales_finde) * 60
+        self.tiempo_promedio_procesamiento_premium = np.mean(self.tiempos_procesamiento_premium_finde + self.tiempos_procesamiento_premium_semana) * 60 
+        self.tiempo_promedio_procesamiento = np.mean(self.tiempos_procesamiento_premium_semana + self.tiempos_procesamiento_premium_finde + self.tiempos_procesamiento_normales_semana + self.tiempos_procesamiento_normales_finde) * 60
+        
         self.utilidad = self.ingresos - self.costos
-
+        
+        # Calcular número total de pizzas para variables de control
+        total_pizzas = self.pizzas_queso + self.pizzas_pepperoni + self.pizzas_carnes
+        
+        # Calcular tiempos promedio para variables de control
+        tiempo_promedio_coccion = np.mean(self.tiempos_horno) if self.tiempos_horno else 0
+        tiempo_promedio_despacho = np.mean(self.tiempos_despacho) if self.tiempos_despacho else 0
+        
         return {
             'Proporcion Llamadas Perdidas': self.proporcion_llamadas_perdidas,
             'Proporcion Pedidos Tardíos': self.proporcion_pedidos_tardios,
@@ -427,60 +298,75 @@ class Pizzeria:
             'Tiempo Medio para Procesar un Pedido Normal (min)': self.tiempo_promedio_procesamiento_normales,
             'Tiempo Medio para Procesar un Pedido Premium (min)': self.tiempo_promedio_procesamiento_premium,
             'Utilidad': self.utilidad,
+            # Variables de control independientes (NO incluir Ingresos porque es componente directo)
+            'Total Pizzas': total_pizzas,
+            'Tiempo Promedio Coccion': tiempo_promedio_coccion,
+            'Tiempo Promedio Despacho': tiempo_promedio_despacho,
+            # Agregar listas completas de tiempos para cálculo posterior
+            'tiempos_llamada': self.tiempos_llamada,
+            'tiempos_salsa': self.tiempos_salsa,
+            'tiempos_queso': self.tiempos_queso,
+            'tiempos_pepperoni': self.tiempos_pepperoni,
+            'tiempos_carnes': self.tiempos_carnes,
+            'tiempos_horno': self.tiempos_horno,
+            'tiempos_embalaje': self.tiempos_embalaje,
+            'tiempos_despacho': self.tiempos_despacho,
+            'tiempos_entre_llamadas': self.tiempos_entre_llamadas,
+            'pedidos_premium_totales': self.pedidos_premium_totales,
+            'pedidos_normales_totales': self.pedidos_normales_totales
         }
-
+    
     def log(self, mensaje):
         time = self.timestamp()
         print(f'{time}: {mensaje}')
         self.log_data += f'{time}: {mensaje}\n'
-
+    
     def timestamp(self):
         horas_totales = int(self.env.now)
         dias = horas_totales // 24 + 1
         horas = horas_totales % 24
         minutos = int((self.env.now - horas_totales) * 60)
         return f'Día {dias}, {horas:02d}:{minutos:02d}'
-
+    
     def obtener_nivel_inventario(self, inventario):
-        return inventario.level
+        """Obtiene el nivel actual del inventario (continuo o discreto)"""
+        return inventario.level  # Todos usan Container ahora
 
     def es_finde(self, now):
-        dia = now // 24
+        dia = now // 24  # Día desde el inicio de la simulación (empieza en 0)
         return (dia % 7) in [5, 6]  # Sábado y domingo
 
-    # ============================================================
-    # AHORA obtener_tiempo_proxima_llamada USA _exp_interarrival()
-    # ============================================================
-    def obtener_tiempo_proxima_llamada(self, now):  # retorna tiempo en horas
-        hora_y_minuto_del_dia = now % 24
-        hora_del_dia = math.floor(hora_y_minuto_del_dia)
-        dia = now // 24
+    
+    def obtener_tiempo_proxima_llamada(self, now): # retorna tiempo en horas
+        # Tasa de llamadas por hora según el horario del día
+        hora_y_minuto_del_dia = now % 24 # Ejemplo: 14.5 -> 14:30 hrs
+        hora_del_dia = math.floor(hora_y_minuto_del_dia) # Hora sin minutos
+        dia = now // 24 # Día desde el inicio de la simulación (empieza en 0)
 
-        es_finde = (dia % 7) in [5, 6]
+         # Diferenciar entre días laborables y fines de semana
+        es_finde = (dia % 7) in [5, 6]  # Sábado y domingo
         self.finde = es_finde
-
+        
         if es_finde:
             if hora_del_dia < 10:
                 tasa = self.tasas_finde[10]
-                # Avanzar a las 10 + exponencial con tasa de las 10
-                tiempo_proxima_llamada = 10 - hora_y_minuto_del_dia + self._exp_interarrival(tasa)
+                tiempo_proxima_llamada = 10 - hora_y_minuto_del_dia + self.rng.exponential(1 / tasa)
+                # Avanzar a las 10 hrs + tiempo hasta la proxima llamada con la tasa de las 10 hrs
             else:
-                tasa = self.tasas_finde[hora_del_dia]
-                tiempo_proxima_llamada = self._exp_interarrival(tasa)
+                tasa = self.tasas_finde[hora_del_dia] # Tomar tasa correspondiente a la hora actual
+                tiempo_proxima_llamada = self.rng.exponential(1 / tasa) 
                 if hora_y_minuto_del_dia + tiempo_proxima_llamada > 24:
-                    # Saltar al día siguiente 10:00 y seguir con la lógica
+                    # Se avanza el tiempo al dia siguiente las 10 hrs
                     tiempo_para_dia_siguiente = 24 - hora_y_minuto_del_dia + 10
                     dia_siguiente = now + tiempo_para_dia_siguiente
-                    tiempo_proxima_llamada = (
-                        tiempo_para_dia_siguiente + self.obtener_tiempo_proxima_llamada(dia_siguiente)
-                    )
-        else:
-            # Día normal
+                    tiempo_proxima_llamada = tiempo_para_dia_siguiente + self.obtener_tiempo_proxima_llamada(dia_siguiente)
+                
+        else: # Dia normal
             if hora_del_dia < 10:
-                tasa = self.tasas_dia_normal[10]
-                tiempo_proxima_llamada = 10 - hora_y_minuto_del_dia + self._exp_interarrival(tasa)
+                tasa = self.tasas_dia_normal[10] 
+                tiempo_proxima_llamada = 10 - hora_y_minuto_del_dia + self.rng.exponential(1 / tasa)
             elif hora_del_dia > 21:
-                # Saltar al día siguiente a las 10
+                # Se avanza el tiempo al dia siguiente las 10 hrs
                 tiempo_para_dia_siguiente = 24 - hora_y_minuto_del_dia + 10
                 dia_siguiente = now + tiempo_para_dia_siguiente
                 dia_siguiente_es_finde = (dia_siguiente // 24) % 7 in [5, 6]
@@ -488,90 +374,86 @@ class Pizzeria:
                     tasa = self.tasas_finde[10]
                 else:
                     tasa = self.tasas_dia_normal[10]
-                tiempo_proxima_llamada = (
-                    tiempo_para_dia_siguiente + self._exp_interarrival(tasa)
-                )
+                tiempo_proxima_llamada = tiempo_para_dia_siguiente + self.rng.exponential(1 / tasa)
             else:
-                tasa = self.tasas_dia_normal[hora_del_dia]
-                tiempo_proxima_llamada = self._exp_interarrival(tasa)
+                tasa = self.tasas_dia_normal[hora_del_dia] # Tomar tasa correspondiente a la hora actual
+                tiempo_proxima_llamada = self.rng.exponential(1 / tasa)
                 if hora_y_minuto_del_dia + tiempo_proxima_llamada > 22:
-                    # Pasar al día siguiente a las 10 y seguir
+                    # Se avanza el tiempo al dia siguiente las 10 hrs
                     tiempo_para_dia_siguiente = 24 - hora_y_minuto_del_dia + 10
                     dia_siguiente = now + tiempo_para_dia_siguiente
-                    tiempo_proxima_llamada = (
-                        tiempo_para_dia_siguiente + self.obtener_tiempo_proxima_llamada(dia_siguiente)
-                    )
+                    tiempo_proxima_llamada = tiempo_para_dia_siguiente + self.obtener_tiempo_proxima_llamada(dia_siguiente)
 
-        return tiempo_proxima_llamada
+        return tiempo_proxima_llamada # unidades en horas
 
+    
     def llegada_llamadas(self):
         yield self.env.timeout(10)  # Iniciar simulación a las 10 AM
         cliente = 0
-
+        
         while True:
+            # Verificar si ya alcanzamos el tiempo límite ANTES de esperar
             if self.env.now >= self.tiempo_limite:
                 if self.logs:
-                    self.log('Se ha alcanzado el tiempo límite de la simulación. No se aceptan más llamadas.')
+                    self.log(f'Se ha alcanzado el tiempo límite de la simulación. No se aceptan más llamadas.')
+                # Esperar a que todos los pedidos activos terminen
                 if self.pedidos_activos:
-                    pedidos_pendientes = [
-                        p for p in self.pedidos_activos if not p.triggered
-                    ]
+                    pedidos_pendientes = [p for p in self.pedidos_activos if not p.triggered]
                     if pedidos_pendientes:
                         if self.logs:
-                            self.log(
-                                f'Esperando a que terminen {len(pedidos_pendientes)} pedidos activos...'
-                            )
+                            self.log(f'Esperando a que terminen {len(pedidos_pendientes)} pedidos activos...')
                         try:
                             yield sp.AllOf(self.env, pedidos_pendientes)
                             if self.logs:
-                                self.log('Todos los pedidos activos han terminado.')
+                                self.log(f'Todos los pedidos activos han terminado.')
                         except:
                             if self.logs:
-                                self.log('No hay más eventos, asumiendo que pedidos terminaron.')
+                                self.log(f'No hay más eventos, asumiendo que pedidos terminaron.')
                 if not self.evento_termino_simulacion.triggered:
                     self.evento_termino_simulacion.succeed()
                 break
-
-            # Esperamos a que llegue la siguiente llamada
+            
+            # Esperamos a que llegue el siguiente cliente
             tiempo_proxima_llamada = self.obtener_tiempo_proxima_llamada(self.env.now)
             if self.env.now + tiempo_proxima_llamada >= self.tiempo_limite:
                 if self.logs:
-                    self.log(
-                        'La próxima llamada excede el tiempo límite de la simulación. Avanzando al tiempo límite.'
-                    )
+                    self.log(f'La próxima llamada excede el tiempo límite de la simulación. Avanzando al tiempo límite.')
                 yield self.env.timeout(self.tiempo_limite - self.env.now)
                 continue
-            else:
+            else: 
+                # Registrar tiempo entre llamadas (en horas)
+                self.tiempos_entre_llamadas.append(tiempo_proxima_llamada)
                 yield self.env.timeout(tiempo_proxima_llamada)
-
+            
+            # Actualizamos métricas
             cliente += 1
             self.llamadas_totales += 1
-
+            
+            
             if self.logs:
                 self.log(f'Cliente {cliente} intenta llamar')
 
-            # Revisamos si hay línea disponible
-            if self.lineas_telefonicas.count < self.cantidad_lineas:
+            
+
+            # Revisamos que exista una línea disponible.
+            if self.lineas_telefonicas.count < 3:
+                # Procedemos a atender la llamada
                 pedido = self.env.process(self.atender_llamada(cliente))
                 self.pedidos_activos.append(pedido)
                 if self.logs:
                     self.log(f'Cliente {cliente} es atendido por teléfono')
+
             else:
+                # Rechazamos la llamada
                 self.llamadas_perdidas += 1
                 if self.logs:
                     self.log(f'No hay líneas disponibles. Cliente {cliente} es rechazado')
-            
+
+                
         
     def atender_llamada(self, cliente):
-        # Vemos si este cliente es premium o no (usar variable antitética)
-        if self.idx_premium < len(self.uniformes_premium):
-            u = self.uniformes_premium[self.idx_premium]
-            premium = u < 3/20  # Bernoulli con p=3/20
-        else:
-            premium = self.rng.choice(a=[True, False], p=[3/20, 17/20])
-        
-        self.idx_premium += 1
-        
+        # Vemos si este cliente es premium o no
+        premium = self.rng.choice(a=[True, False], p=[3/20, 17/20])
         if premium:
             self.pedidos_premium_totales += 1
             prioridad = 1
@@ -590,10 +472,13 @@ class Pizzeria:
             # Transformación inversa para gamma
             beta = gamma_dist.ppf(u, a=4, scale=0.5) / 60
         else:
-            beta = self.rng.gamma(shape=4, scale=0.5, size=1)/60
+            beta = self.rng.gamma(shape=4, scale=0.5, size=1)[0]/60
         
         # SIEMPRE incrementar el contador
         self.idx_llamada += 1
+        
+        # Registrar tiempo de llamada para variable de control (en minutos)
+        self.tiempos_llamada.append(beta * 60)
         
         with self.lineas_telefonicas.request() as linea:
             yield self.env.timeout(beta) # Esperamos
@@ -604,37 +489,11 @@ class Pizzeria:
         inicio_tiempo_orden = self.env.now
         
         
-        # Vemos la cantidad de pizzas a preparar (usar variable antitética)
-        if self.idx_num_pizzas < len(self.uniformes_num_pizzas):
-            u = self.uniformes_num_pizzas[self.idx_num_pizzas]
-            if premium:
-                # Transformación inversa para [1,2,3,4] con p=[0.3,0.4,0.2,0.1]
-                if u < 0.3:
-                    cantidad_pizzas_a_preparar = 1
-                elif u < 0.7:
-                    cantidad_pizzas_a_preparar = 2
-                elif u < 0.9:
-                    cantidad_pizzas_a_preparar = 3
-                else:
-                    cantidad_pizzas_a_preparar = 4
-            else:
-                # Transformación inversa para [1,2,3,4] con p=[0.6,0.2,0.15,0.05]
-                if u < 0.6:
-                    cantidad_pizzas_a_preparar = 1
-                elif u < 0.8:
-                    cantidad_pizzas_a_preparar = 2
-                elif u < 0.95:
-                    cantidad_pizzas_a_preparar = 3
-                else:
-                    cantidad_pizzas_a_preparar = 4
+        # Vemos la cantidad de pizzas a preparar
+        if premium:
+            cantidad_pizzas_a_preparar = self.rng.choice(a=[1,2,3,4], p=[0.3,0.4,0.2,0.1])
         else:
-            if premium:
-                cantidad_pizzas_a_preparar = self.rng.choice(a=[1,2,3,4], p=[0.3,0.4,0.2,0.1])
-            else:
-                cantidad_pizzas_a_preparar = self.rng.choice(a=[1,2,3,4], p=[0.6, 0.2, 0.15, 0.05])
-        
-        self.idx_num_pizzas += 1
-        
+            cantidad_pizzas_a_preparar = self.rng.choice(a=[1,2,3,4], p=[0.6, 0.2, 0.15, 0.05])
         if self.logs: 
             self.log(f'Cliente {cliente} ordena {cantidad_pizzas_a_preparar} pizzas')
         # Tipo de pizza a preparar:
@@ -643,35 +502,16 @@ class Pizzeria:
         # 3. Todas carnes
         tipos_pizzas = []
         for i in range(cantidad_pizzas_a_preparar):
-            # Usar variable antitética para tipo de pizza
-            if self.idx_tipo_pizza < len(self.uniformes_tipo_pizza):
-                u = self.uniformes_tipo_pizza[self.idx_tipo_pizza]
-                if premium:
-                    # Transformación inversa para [1,2,3] con p=[0.3,0.6,0.1]
-                    if u < 0.3:
-                        tipo_pizza = 1
-                    elif u < 0.9:
-                        tipo_pizza = 2
-                    else:
-                        tipo_pizza = 3
-                else:
-                    # Transformación inversa para [1,2,3] con p=[0.1,0.4,0.5]
-                    if u < 0.1:
-                        tipo_pizza = 1
-                    elif u < 0.5:
-                        tipo_pizza = 2
-                    else:
-                        tipo_pizza = 3
+            if premium:
+                tipo_pizza = self.rng.choice(a=[1,2,3], p=[0.3,0.6,0.1])
+                tipos_pizzas.append(tipo_pizza)
+                if self.logs:
+                    self.log(f'Pizza {i+1} del cliente {cliente} es tipo {tipo_pizza}')
             else:
-                if premium:
-                    tipo_pizza = self.rng.choice(a=[1,2,3], p=[0.3,0.6,0.1])
-                else:
-                    tipo_pizza = self.rng.choice(a=[1,2,3], p=[0.1,0.4,0.5])
-            
-            self.idx_tipo_pizza += 1
-            tipos_pizzas.append(tipo_pizza)
-            if self.logs:
-                self.log(f'Pizza {i+1} del cliente {cliente} es tipo {tipo_pizza}')
+                tipo_pizza = self.rng.choice(a=[1,2,3], p=[0.1,0.4,0.5])
+                tipos_pizzas.append(tipo_pizza)
+                if self.logs:
+                    self.log(f'Pizza {i+1} del cliente {cliente} es tipo {tipo_pizza}')
             
             
         # Procedemos a preparar la pizza y calcular el valor de la orden
@@ -721,16 +561,8 @@ class Pizzeria:
                 if self.logs:
                     self.log(f'Se comienza a preparar la pizza {num_pizza} del cliente {cliente}')
 
-                # Vemos cuanta salsa se añadirá (continua - usar variable antitética)
-                if self.idx_cantidad_salsa < len(self.uniformes_cantidad_salsa):
-                    u = self.uniformes_cantidad_salsa[self.idx_cantidad_salsa]
-                    from scipy.stats import expon
-                    xi_1 = expon.ppf(u, scale=250)
-                else:
-                    xi_1 = self.rng.exponential(scale = 250)
-                
-                self.idx_cantidad_salsa += 1
-                
+                # Vemos cuanta salsa se añadirá (continua)
+                xi_1 = self.rng.exponential(scale = 250)
                 if xi_1 > self.obtener_nivel_inventario(self.salsa_de_tomate):
                     if not self.en_reposicion[self.salsa_de_tomate]:
                         if self.logs:
@@ -740,16 +572,9 @@ class Pizzeria:
                         if self.logs:
                             self.log(f'Esperando reposición de salsa de tomate para la pizza {num_pizza} del cliente {cliente}.')
                         yield self.evento_inventario_repuesto[self.salsa_de_tomate]
-                # Agregamos Salsa (usar variable antitética para tiempo)
-                if self.idx_tiempo_salsa < len(self.uniformes_tiempo_salsa):
-                    u = self.uniformes_tiempo_salsa[self.idx_tiempo_salsa]
-                    from scipy.stats import beta as beta_dist
-                    gamma_1 = beta_dist.ppf(u, a=5, b=2.2) / 60
-                else:
-                    gamma_1 = self.rng.beta(a = 5, b = 2.2)/60
-                
-                self.idx_tiempo_salsa += 1
-                
+                # Agregamos Salsa
+                gamma_1 = self.rng.beta(a = 5, b = 2.2)/60
+                self.tiempos_salsa.append(gamma_1 * 60)  # Registrar en minutos
                 yield self.env.timeout(gamma_1) # Esperamos a que se ponga la salsa
                 # Descontamos la salsa (continuo)
                 yield self.salsa_de_tomate.get(xi_1)
@@ -792,22 +617,15 @@ class Pizzeria:
                 # SIEMPRE incrementar el contador
                 self.idx_tiempo_queso += 1
                 
+                self.tiempos_queso.append(gamma_2 * 60)  # Registrar en minutos
                 yield self.env.timeout(gamma_2) # Esperamos a que se ponga el queso
                 # Descontamos queso
                 yield self.queso_mozzarella.get(xi_2)
                 
                 # Agregamos Pepperoni si pizza es de pepperoni o mix de carnes
                 if tipo_pizza==2 or tipo_pizza==3:
-                    # Vemos cuanto pepperoni se añadirá (discreto - usar variable antitética)
-                    if self.idx_cantidad_pepperoni < len(self.uniformes_cantidad_pepperoni):
-                        u = self.uniformes_cantidad_pepperoni[self.idx_cantidad_pepperoni]
-                        from scipy.stats import poisson
-                        xi_3 = int(poisson.ppf(u, mu=20))
-                    else:
-                        xi_3 = self.rng.poisson(lam = 20)
-                    
-                    self.idx_cantidad_pepperoni += 1
-                    
+                    # Vemos cuanto pepperoni se añadirá (discreto)
+                    xi_3 = self.rng.poisson(lam = 20)
                     if xi_3 > self.obtener_nivel_inventario(self.pepperoni):
                         if not self.en_reposicion[self.pepperoni]:
                             if self.logs:
@@ -819,18 +637,9 @@ class Pizzeria:
                             yield self.evento_inventario_repuesto[self.pepperoni]
                             if self.logs:
                                 self.log(f'Reposición de pepperoni completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
-                    # Agregamos pepperoni (usar variable antitética para tiempo)
-                    if self.idx_tiempo_pepperoni < len(self.uniformes_tiempo_pepperoni):
-                        u = self.uniformes_tiempo_pepperoni[self.idx_tiempo_pepperoni]
-                        from scipy.stats import lognorm
-                        # numpy lognormal(mean, sigma) vs scipy lognorm(s, scale)
-                        # scipy: s=sigma, scale=exp(mean)
-                        gamma_3 = lognorm.ppf(u, s=0.25, scale=np.exp(0.5)) / 60
-                    else:
-                        gamma_3 = self.rng.lognormal(mean=0.5, sigma=0.25)/60
-                    
-                    self.idx_tiempo_pepperoni += 1
-                    
+                    # Agregamos pepperoni
+                    gamma_3 = self.rng.lognormal(mean=0.5, sigma=0.25)/60
+                    self.tiempos_pepperoni.append(gamma_3 * 60)  # Registrar en minutos
                     yield self.env.timeout(gamma_3) # Esperamos a que se ponga el pepperoni
                     # Descontamos pepperoni
                     if xi_3 > 0:
@@ -838,16 +647,8 @@ class Pizzeria:
                     
                 # Agregamos Mix
                 if tipo_pizza==3:
-                    # Vemos cuanta carne se añadirá (discreto - usar variable antitética)
-                    if self.idx_cantidad_carnes < len(self.uniformes_cantidad_carnes):
-                        u = self.uniformes_cantidad_carnes[self.idx_cantidad_carnes]
-                        from scipy.stats import binom
-                        xi_4 = int(binom.ppf(u, n=16, p=0.42))
-                    else:
-                        xi_4 = self.rng.binomial(n = 16, p = 0.42)
-                    
-                    self.idx_cantidad_carnes += 1
-                    
+                    # Vemos cuanta carne se añadirá (discreto)
+                    xi_4 = self.rng.binomial(n = 16, p = 0.42)
                     if xi_4 > self.obtener_nivel_inventario(self.mix_carnes):
                         if not self.en_reposicion[self.mix_carnes]:
                             if self.logs:
@@ -859,16 +660,9 @@ class Pizzeria:
                             yield self.evento_inventario_repuesto[self.mix_carnes]
                             if self.logs:
                                 self.log(f'Reposición de mix de carnes completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
-                    # Agregamos mix (usar variable antitética para tiempo)
-                    if self.idx_tiempo_carnes < len(self.uniformes_tiempo_carnes):
-                        u = self.uniformes_tiempo_carnes[self.idx_tiempo_carnes]
-                        # Transformación inversa para uniforme(1, 1.8)
-                        gamma_4 = (1 + u * 0.8) / 60
-                    else:
-                        gamma_4 = self.rng.uniform(low = 1, high = 1.8)/60
-                    
-                    self.idx_tiempo_carnes += 1
-                    
+                    # Agregamos mix
+                    gamma_4 = self.rng.uniform(low = 1, high = 1.8)/60
+                    self.tiempos_carnes.append(gamma_4 * 60)  # Registrar en minutos
                     yield self.env.timeout(gamma_4) # Esperamos a que se ponga el mix
                     # Descontamos Mix
                     if xi_4 > 0:
@@ -899,6 +693,7 @@ class Pizzeria:
             # SIEMPRE incrementar el contador (para contar en simulación preliminar)
             self.idx_coccion += 1
             
+            self.tiempos_horno.append(delta * 60)  # Registrar en minutos
             yield self.env.timeout(delta)
             if self.logs:
                 self.log(f'La pizza {num_pizza} del cliente {cliente} salió del horno, solicitando embalaje.')
@@ -914,23 +709,8 @@ class Pizzeria:
                 yield trabajador_request
                 if self.logs:
                     self.log(f'La pizza {num_pizza} del cliente {cliente} está siendo embalada.')
-                
-                # Usar variable antitética para tiempo de embalaje
-                if self.idx_tiempo_embalaje < len(self.uniformes_tiempo_embalaje):
-                    u = self.uniformes_tiempo_embalaje[self.idx_tiempo_embalaje]
-                    # Transformación inversa para triangular(1.1, 2, 2.3)
-                    # F(x) para triangular con left=a, mode=c, right=b
-                    a, c, b = 1.1, 2, 2.3
-                    Fc = (c - a) / (b - a)  # CDF en el mode
-                    if u < Fc:
-                        epsilon = (a + np.sqrt(u * (b - a) * (c - a))) / 60
-                    else:
-                        epsilon = (b - np.sqrt((1 - u) * (b - a) * (b - c))) / 60
-                else:
-                    epsilon = self.rng.triangular(left=1.1, mode=2, right=2.3) / 60
-                
-                self.idx_tiempo_embalaje += 1
-                
+                epsilon = self.rng.triangular(left = 1.1, mode = 2, right = 2.3)/60
+                self.tiempos_embalaje.append(epsilon * 60)  # Registrar en minutos
                 yield self.env.timeout(epsilon)
                 if self.logs:
                     self.log(f'La pizza {num_pizza} del cliente {cliente} ha sido embalada.')
@@ -954,6 +734,7 @@ class Pizzeria:
             # SIEMPRE incrementar el contador
             self.idx_despacho_ida += 1
             
+            self.tiempos_despacho.append(tiempo_local_domicilio * 60)  # Registrar ida en minutos
             yield self.env.timeout(tiempo_local_domicilio)
             if self.logs:
                 self.log(f'Llega el repartidor al domicilio del cliente {cliente}.')
@@ -1014,6 +795,7 @@ class Pizzeria:
             # SIEMPRE incrementar el contador
             self.idx_despacho_vuelta += 1
             
+            self.tiempos_despacho.append(tiempo_domicilio_local * 60)  # Registrar vuelta en minutos
             yield self.env.timeout(tiempo_domicilio_local)
             if self.logs:
                 self.log(f'Llega el repartidor del cliente {cliente} al local.')
@@ -1312,189 +1094,338 @@ class Pizzeria:
         return horas
 
 
-def replicas_simulación(iteraciones, tiempo_horas, usar_antiteticas=False):
+def aplicar_variables_control(utilidades, X_matrix):
     """
-    - Caso base: réplicas independientes.
-    - Con antitéticas: SOLO en tiempos entre llamadas (interarrival),
-      usando:
-        U  en la réplica 1
-        1-U en la réplica 2
-      y Common Random Numbers (CRN) para el resto de los streams.
+    Aplica variables de control múltiples ortogonales a las utilidades.
+    
+    Args:
+        utilidades: array de utilidades observadas
+        X_matrix: matriz n x 10 con las variables de control
+    
+    Returns:
+        utilidades_controladas: array con utilidades ajustadas
+        coeficientes_beta: coeficientes de control calculados
     """
+    Y = np.array(utilidades)
+    X = np.array(X_matrix)
+    
+    # Calcular medias teóricas E[X] para las variables de control
+    # X1-X8: Usar medias observadas
+    E_X_tiempos = np.mean(X[:, :8], axis=0)
+    
+    # X9: Tiempo promedio entre llamadas (proceso de renovación no homogéneo)
+    tasas_normal = [2, 6, 12, 20, 12, 14, 12, 10, 9, 8, 6, 4]
+    tiempos_normal = [1/tasa for tasa in tasas_normal]
+    E_T_normal = np.mean(tiempos_normal)
+    
+    tasas_finde = [2, 8, 18, 25, 25, 24, 18, 12, 11, 10, 9, 8, 6, 4]
+    tiempos_finde = [1/tasa for tasa in tasas_finde]
+    E_T_finde = np.mean(tiempos_finde)
+    
+    E_X9 = (5 * E_T_normal + 2 * E_T_finde) / 7
+    
+    # X10: Proporción de pedidos premium
+    E_X10 = 3/20
+    
+    E_X = np.concatenate([E_X_tiempos, [E_X9, E_X10]])
+    
+    # Centrar variables
+    X_centered = X - E_X
+    Y_centered = Y - np.mean(Y)
+    
+    # Regresión múltiple
+    try:
+        beta = np.linalg.lstsq(X_centered, Y_centered, rcond=None)[0]
+        Y_control = Y - X_centered @ beta
+    except np.linalg.LinAlgError:
+        print("⚠️  Error en regresión: matriz singular")
+        Y_control = Y
+        beta = np.zeros(10)
+    
+    return Y_control, beta
 
+
+def replicas_simulacion_combinada(iteraciones, tiempo_horas):
+    """
+    Combina variables antitéticas con múltiples variables de control.
+    
+    Estrategia:
+    1. Generar pares de réplicas con variables antitéticas (U y 1-U)
+    2. Aplicar variables de control a cada réplica del par
+    3. Promediar las utilidades controladas de cada par
+    
+    Esto aplica DOS niveles de reducción de varianza:
+    - Nivel 1: Variables de control en cada réplica
+    - Nivel 2: Variables antitéticas entre pares
+    
+    Retorna:
+    - lista_resultados: lista con métricas de cada réplica
+    - estadisticas: dict con media, varianza y análisis del estimador
+    """
     lista_resultados = []
-    estimadores_utilidad = []
-
-    if usar_antiteticas:
-        # Cotas razonables por semana
-        n_interarrival = 2000  # llamadas esperadas (~1000) + margen
-        n_coccion = 1700
-        n_despacho = 1000
-        n_llamada = 1000
-        n_premium = 1000
-        n_num_pizzas = 4000
-        n_tipo_pizza = 1700
-        n_cantidad_queso = 1700
-        n_tiempo_queso = 1700
-        n_cantidad_salsa = 1700
-        n_tiempo_salsa = 1700
-        n_cantidad_pepperoni = 1700
-        n_tiempo_pepperoni = 1700
-        n_cantidad_carnes = 1700
-        n_tiempo_carnes = 1700
-        n_tiempo_embalaje = 1700
-
-        pares = iteraciones // 2
-
-        utils_1 = []
-        utils_2 = []
-
-        for i in range(pares):
-            rng_U = np.random.default_rng(123456 + i)
-
-            # 🔹 Interarrivals (los ÚNICOS antitéticos)
-            U_interarrival = rng_U.uniform(0, 1, n_interarrival)
-
-            # CRN en el resto de los streams
-            U_coccion = rng_U.uniform(0, 1, n_coccion)
-            U_despacho_ida = rng_U.uniform(0, 1, n_despacho)
-            U_despacho_vuelta = rng_U.uniform(0, 1, n_despacho)
-            U_llamada = rng_U.uniform(0, 1, n_llamada)
-            U_premium = rng_U.uniform(0, 1, n_premium)
-            U_num_pizzas = rng_U.uniform(0, 1, n_num_pizzas)
-            U_tipo_pizza = rng_U.uniform(0, 1, n_tipo_pizza)
-            U_cant_queso = rng_U.uniform(0, 1, n_cantidad_queso)
-            U_time_queso = rng_U.uniform(0, 1, n_tiempo_queso)
-            U_cant_salsa = rng_U.uniform(0, 1, n_cantidad_salsa)
-            U_time_salsa = rng_U.uniform(0, 1, n_tiempo_salsa)
-            U_cant_pepp = rng_U.uniform(0, 1, n_cantidad_pepperoni)
-            U_time_pepp = rng_U.uniform(0, 1, n_tiempo_pepperoni)
-            U_cant_carnes = rng_U.uniform(0, 1, n_cantidad_carnes)
-            U_time_carnes = rng_U.uniform(0, 1, n_tiempo_carnes)
-            U_time_embalaje = rng_U.uniform(0, 1, n_tiempo_embalaje)
-
-            seed_global = 900000 + i
-
-            # =========================
-            # Réplica 1 (U)
-            # =========================
-            env1 = sp.Environment()
-            p1 = Pizzeria(env1)
-            p1.iniciar_simulacion(
-                tiempo_horas,
-                seed_global,
-                logs=False,
-                uniformes_coccion=U_coccion,
-                uniformes_despacho_ida=U_despacho_ida,
-                uniformes_despacho_vuelta=U_despacho_vuelta,
-                uniformes_llamada=U_llamada,
-                uniformes_premium=U_premium,
-                uniformes_num_pizzas=U_num_pizzas,
-                uniformes_tipo_pizza=U_tipo_pizza,
-                uniformes_cantidad_queso=U_cant_queso,
-                uniformes_tiempo_queso=U_time_queso,
-                uniformes_cantidad_salsa=U_cant_salsa,
-                uniformes_tiempo_salsa=U_time_salsa,
-                uniformes_cantidad_pepperoni=U_cant_pepp,
-                uniformes_tiempo_pepperoni=U_time_pepp,
-                uniformes_cantidad_carnes=U_cant_carnes,
-                uniformes_tiempo_carnes=U_time_carnes,
-                uniformes_tiempo_embalaje=U_time_embalaje,
-                uniformes_interarrival=U_interarrival,
-            )
-            met1 = p1.obtener_metricas()
-            util1 = met1['Utilidad']
-            lista_resultados.append(met1)
-            utils_1.append(util1)
-
-            # =========================
-            # Réplica 2 (1-U) SOLO en interarrival
-            # =========================
-            env2 = sp.Environment()
-            p2 = Pizzeria(env2)
-            p2.iniciar_simulacion(
-                tiempo_horas,
-                seed_global,
-                logs=False,
-                uniformes_coccion=U_coccion,
-                uniformes_despacho_ida=U_despacho_ida,
-                uniformes_despacho_vuelta=U_despacho_vuelta,
-                uniformes_llamada=U_llamada,
-                uniformes_premium=U_premium,
-                uniformes_num_pizzas=U_num_pizzas,
-                uniformes_tipo_pizza=U_tipo_pizza,
-                uniformes_cantidad_queso=U_cant_queso,
-                uniformes_tiempo_queso=U_time_queso,
-                uniformes_cantidad_salsa=U_cant_salsa,
-                uniformes_tiempo_salsa=U_time_salsa,
-                uniformes_cantidad_pepperoni=U_cant_pepp,
-                uniformes_tiempo_pepperoni=U_time_pepp,
-                uniformes_cantidad_carnes=U_cant_carnes,
-                uniformes_tiempo_carnes=U_time_carnes,
-                uniformes_tiempo_embalaje=U_time_embalaje,
-                uniformes_interarrival=1 - U_interarrival,
-            )
-            met2 = p2.obtener_metricas()
-            util2 = met2['Utilidad']
-            lista_resultados.append(met2)
-            utils_2.append(util2)
-
-            estimadores_utilidad.append((util1 + util2) / 2.0)
-
-        pares_efectivos = len(estimadores_utilidad)
-        media = np.mean(estimadores_utilidad)
-        var_est = np.var(estimadores_utilidad, ddof=1) / pares_efectivos
-        std_est = np.sqrt(var_est)
-        rho = np.corrcoef(utils_1, utils_2)[0, 1]
-
-        print("\n===== RESULTADOS CON VARIABLES ANTITÉTICAS (interarrival) =====")
-        print(f"Número de pares efectivos   = {pares_efectivos}")
-        print(f"Media estimador utilidad    = {media:,.2f}")
-        print(f"Varianza del estimador     = {var_est:,.2f}")
-        print(f"Desviación estándar        = {std_est:,.2f}")
-        print(f"Correlación utilidades par = {rho:.4f}")
-        print("================================================================\n")
-
-        return lista_resultados, {
-            'metodo': 'antiteticas_interarrival',
-            'media': media,
-            'varianza': var_est,
-            'std': std_est,
-            'n_pares': pares_efectivos,
-            'estimadores': estimadores_utilidad,
-            'corr_par': rho,
-        }
-
+    
+    # Cotas generosas basadas en observaciones empíricas
+    n_coccion = 1700
+    n_despacho = 1000
+    n_llamada = 1000
+    n_cantidad_queso = 1700
+    n_tiempo_queso = 1700
+    
+    # Generar pares de réplicas con variables antitéticas
+    pares = iteraciones // 2
+    
+    # Listas para almacenar todas las réplicas y sus variables de control
+    todas_utilidades = []
+    todas_X_matrix = []
+    indices_pares = []  # Para saber qué réplicas forman cada par
+    
+    print("="*80)
+    print("MÉTODO COMBINADO: VARIABLES ANTITÉTICAS + MÚLTIPLES VARIABLES DE CONTROL")
+    print("="*80)
+    print(f"Número de pares antitéticos: {pares}")
+    print(f"Réplicas totales: {iteraciones}")
+    print("="*80 + "\n")
+    
+    for i in range(pares):
+        # Generar números uniformes para las variables antitéticas
+        rng_antiteticas = np.random.default_rng(999999 + i)
+        uniformes_coccion = rng_antiteticas.uniform(0, 1, n_coccion)
+        uniformes_despacho_ida = rng_antiteticas.uniform(0, 1, n_despacho)
+        uniformes_despacho_vuelta = rng_antiteticas.uniform(0, 1, n_despacho)
+        uniformes_llamada = rng_antiteticas.uniform(0, 1, n_llamada)
+        uniformes_cantidad_queso = rng_antiteticas.uniform(0, 1, n_cantidad_queso)
+        uniformes_tiempo_queso = rng_antiteticas.uniform(0, 1, n_tiempo_queso)
+        
+        # ========== RÉPLICA NORMAL (U) ==========
+        env = sp.Environment()
+        pizzeria = Pizzeria(env)
+        pizzeria.iniciar_simulacion(tiempo_horas, 2*i, logs=False,
+                                   uniformes_coccion=uniformes_coccion,
+                                   uniformes_despacho_ida=uniformes_despacho_ida,
+                                   uniformes_despacho_vuelta=uniformes_despacho_vuelta,
+                                   uniformes_llamada=uniformes_llamada,
+                                   uniformes_cantidad_queso=uniformes_cantidad_queso,
+                                   uniformes_tiempo_queso=uniformes_tiempo_queso)
+        metricas_normal = pizzeria.obtener_metricas()
+        lista_resultados.append(metricas_normal)
+        
+        # Extraer utilidad y variables de control
+        utilidad_normal = metricas_normal['Utilidad']
+        todas_utilidades.append(utilidad_normal)
+        
+        # Construir vector de variables de control para esta réplica
+        x1 = np.mean(metricas_normal['tiempos_llamada']) if len(metricas_normal['tiempos_llamada']) > 0 else 0
+        x2 = np.mean(metricas_normal['tiempos_salsa']) if len(metricas_normal['tiempos_salsa']) > 0 else 0
+        x3 = np.mean(metricas_normal['tiempos_queso']) if len(metricas_normal['tiempos_queso']) > 0 else 0
+        x4 = np.mean(metricas_normal['tiempos_pepperoni']) if len(metricas_normal['tiempos_pepperoni']) > 0 else 0
+        x5 = np.mean(metricas_normal['tiempos_carnes']) if len(metricas_normal['tiempos_carnes']) > 0 else 0
+        x6 = np.mean(metricas_normal['tiempos_horno']) if len(metricas_normal['tiempos_horno']) > 0 else 0
+        x7 = np.mean(metricas_normal['tiempos_embalaje']) if len(metricas_normal['tiempos_embalaje']) > 0 else 0
+        x8 = np.mean(metricas_normal['tiempos_despacho']) if len(metricas_normal['tiempos_despacho']) > 0 else 0
+        x9 = np.mean(metricas_normal['tiempos_entre_llamadas']) if len(metricas_normal['tiempos_entre_llamadas']) > 0 else 0
+        x10 = metricas_normal['pedidos_premium_totales'] / max(metricas_normal['pedidos_premium_totales'] + metricas_normal['pedidos_normales_totales'], 1)
+        
+        todas_X_matrix.append([x1, x2, x3, x4, x5, x6, x7, x8, x9, x10])
+        indices_pares.append((len(todas_utilidades) - 1, -1))  # Marcador temporal
+        
+        print(f'Par {i+1}: Réplica {2*i+1} (normal) completada.')
+        
+        # ========== RÉPLICA ANTITÉTICA (1-U) ==========
+        uniformes_coccion_anti = 1 - uniformes_coccion
+        uniformes_despacho_ida_anti = 1 - uniformes_despacho_ida
+        uniformes_despacho_vuelta_anti = 1 - uniformes_despacho_vuelta
+        uniformes_llamada_anti = 1 - uniformes_llamada
+        uniformes_cantidad_queso_anti = 1 - uniformes_cantidad_queso
+        uniformes_tiempo_queso_anti = 1 - uniformes_tiempo_queso
+        
+        env = sp.Environment()
+        pizzeria = Pizzeria(env)
+        pizzeria.iniciar_simulacion(tiempo_horas, 2*i+1, logs=False,
+                                   uniformes_coccion=uniformes_coccion_anti,
+                                   uniformes_despacho_ida=uniformes_despacho_ida_anti,
+                                   uniformes_despacho_vuelta=uniformes_despacho_vuelta_anti,
+                                   uniformes_llamada=uniformes_llamada_anti,
+                                   uniformes_cantidad_queso=uniformes_cantidad_queso_anti,
+                                   uniformes_tiempo_queso=uniformes_tiempo_queso_anti)
+        metricas_anti = pizzeria.obtener_metricas()
+        lista_resultados.append(metricas_anti)
+        
+        # Extraer utilidad y variables de control
+        utilidad_anti = metricas_anti['Utilidad']
+        todas_utilidades.append(utilidad_anti)
+        
+        # Construir vector de variables de control para esta réplica
+        x1 = np.mean(metricas_anti['tiempos_llamada']) if len(metricas_anti['tiempos_llamada']) > 0 else 0
+        x2 = np.mean(metricas_anti['tiempos_salsa']) if len(metricas_anti['tiempos_salsa']) > 0 else 0
+        x3 = np.mean(metricas_anti['tiempos_queso']) if len(metricas_anti['tiempos_queso']) > 0 else 0
+        x4 = np.mean(metricas_anti['tiempos_pepperoni']) if len(metricas_anti['tiempos_pepperoni']) > 0 else 0
+        x5 = np.mean(metricas_anti['tiempos_carnes']) if len(metricas_anti['tiempos_carnes']) > 0 else 0
+        x6 = np.mean(metricas_anti['tiempos_horno']) if len(metricas_anti['tiempos_horno']) > 0 else 0
+        x7 = np.mean(metricas_anti['tiempos_embalaje']) if len(metricas_anti['tiempos_embalaje']) > 0 else 0
+        x8 = np.mean(metricas_anti['tiempos_despacho']) if len(metricas_anti['tiempos_despacho']) > 0 else 0
+        x9 = np.mean(metricas_anti['tiempos_entre_llamadas']) if len(metricas_anti['tiempos_entre_llamadas']) > 0 else 0
+        x10 = metricas_anti['pedidos_premium_totales'] / max(metricas_anti['pedidos_premium_totales'] + metricas_anti['pedidos_normales_totales'], 1)
+        
+        todas_X_matrix.append([x1, x2, x3, x4, x5, x6, x7, x8, x9, x10])
+        
+        # Actualizar índice del par
+        indices_pares[-1] = (indices_pares[-1][0], len(todas_utilidades) - 1)
+        
+        print(f'Par {i+1}: Réplica {2*i+2} (antitética) completada.')
+        print("")
+    
+    # ========== APLICAR VARIABLES DE CONTROL ==========
+    print("\nCalculando promedios de pares antitéticos...")
+    
+    # ENFOQUE 1: Promediar primero los pares, luego aplicar VC
+    utilidades_pares = []
+    X_matrix_pares = []
+    
+    for idx_normal, idx_anti in indices_pares:
+        # Promediar utilidades del par
+        util_par = (todas_utilidades[idx_normal] + todas_utilidades[idx_anti]) / 2
+        utilidades_pares.append(util_par)
+        
+        # Promediar variables de control del par
+        X_par = (np.array(todas_X_matrix[idx_normal]) + np.array(todas_X_matrix[idx_anti])) / 2
+        X_matrix_pares.append(X_par.tolist())
+    
+    print("Aplicando variables de control a los promedios de pares...")
+    utilidades_pares_controladas, beta_pares = aplicar_variables_control(utilidades_pares, X_matrix_pares)
+    
+    # ENFOQUE 2: Aplicar VC individualmente, luego promediar
+    print("Aplicando variables de control a réplicas individuales...")
+    utilidades_controladas, beta = aplicar_variables_control(todas_utilidades, todas_X_matrix)
+    
+    estimadores_vc_luego_antiteticas = []
+    for idx_normal, idx_anti in indices_pares:
+        promedio_par = (utilidades_controladas[idx_normal] + utilidades_controladas[idx_anti]) / 2
+        estimadores_vc_luego_antiteticas.append(promedio_par)
+    
+    # ========== CALCULAR ESTADÍSTICAS ==========
+    # Solo variables antitéticas (con correlación negativa)
+    estimadores_solo_antiteticas = []
+    for idx_normal, idx_anti in indices_pares:
+        promedio_par = (todas_utilidades[idx_normal] + todas_utilidades[idx_anti]) / 2
+        estimadores_solo_antiteticas.append(promedio_par)
+    
+    media_antiteticas = np.mean(estimadores_solo_antiteticas)
+    var_antiteticas = np.var(estimadores_solo_antiteticas, ddof=1) / pares
+    
+    # Caso base: varianza usando todas las réplicas individuales
+    media_base = np.mean(todas_utilidades)
+    var_base = np.var(todas_utilidades, ddof=1) / len(todas_utilidades)
+    
+    # Solo variables de control (todas las réplicas)
+    media_vc = np.mean(utilidades_controladas)
+    var_vc = np.var(utilidades_controladas, ddof=1) / len(utilidades_controladas)
+    
+    # Método combinado ENFOQUE 1: Antitéticas primero, luego VC
+    media_combinada1 = np.mean(utilidades_pares_controladas)
+    var_combinada1 = np.var(utilidades_pares_controladas, ddof=1) / pares
+    
+    # Método combinado ENFOQUE 2: VC primero, luego antitéticas  
+    media_combinada2 = np.mean(estimadores_vc_luego_antiteticas)
+    var_combinada2 = np.var(estimadores_vc_luego_antiteticas, ddof=1) / pares
+    
+    # ========== REPORTE DE RESULTADOS ==========
+    print("\n" + "="*80)
+    print("RESULTADOS FINALES")
+    print("="*80)
+    
+    print("\nCoeficientes de control para ENFOQUE 1 (Antitéticas → VC):")
+    coef_labels = ['llamada', 'salsa', 'queso', 'pepperoni', 'carnes', 'horno', 
+                   'embalaje', 'despacho', 'tiempo_inter', 'prop_prem']
+    for i, label in enumerate(coef_labels):
+        print(f"  β{i+1:2d} ({label:13s}) = {beta_pares[i]:,.4f}")
+    
+    print(f"\n1. CASO BASE (sin reducción):")
+    print(f"   Media: ${media_base:,.2f}")
+    print(f"   Var(Ȳ): {var_base:,.2f}")
+    print(f"   SD: ${np.sqrt(var_base):,.2f}")
+    
+    print(f"\n2. SOLO VARIABLES ANTITÉTICAS:")
+    print(f"   Media: ${media_antiteticas:,.2f}")
+    print(f"   Var(Ȳ_anti): {var_antiteticas:,.2f}")
+    print(f"   SD: ${np.sqrt(var_antiteticas):,.2f}")
+    reduccion_anti = (var_base - var_antiteticas) / var_base * 100 if var_base > 0 else 0
+    print(f"   Reducción vs base: {reduccion_anti:.2f}%")
+    
+    print(f"\n3. SOLO VARIABLES DE CONTROL:")
+    print(f"   Media: ${media_vc:,.2f}")
+    print(f"   Var(Ȳ_vc): {var_vc:,.2f}")
+    print(f"   SD: ${np.sqrt(var_vc):,.2f}")
+    reduccion_vc = (var_base - var_vc) / var_base * 100 if var_base > 0 else 0
+    print(f"   Reducción vs base: {reduccion_vc:.2f}%")
+    
+    print(f"\n4. COMBINADO - ENFOQUE 1 (Antitéticas → VC):")
+    print(f"   (Promediar pares primero, luego aplicar variables de control)")
+    print(f"   Media: ${media_combinada1:,.2f}")
+    print(f"   Var(Ȳ_comb1): {var_combinada1:,.2f}")
+    print(f"   SD: ${np.sqrt(var_combinada1):,.2f}")
+    reduccion_comb1 = (var_base - var_combinada1) / var_base * 100 if var_base > 0 else 0
+    factor_mejora1 = var_base / var_combinada1 if var_combinada1 > 0 else 0
+    print(f"   Reducción vs base: {reduccion_comb1:.2f}%")
+    print(f"   Factor de mejora: {factor_mejora1:.2f}x")
+    
+    print(f"\n5. COMBINADO - ENFOQUE 2 (VC → Antitéticas):")
+    print(f"   (Aplicar variables de control primero, luego promediar pares)")
+    print(f"   Media: ${media_combinada2:,.2f}")
+    print(f"   Var(Ȳ_comb2): {var_combinada2:,.2f}")
+    print(f"   SD: ${np.sqrt(var_combinada2):,.2f}")
+    reduccion_comb2 = (var_base - var_combinada2) / var_base * 100 if var_base > 0 else 0
+    factor_mejora2 = var_base / var_combinada2 if var_combinada2 > 0 else 0
+    print(f"   Reducción vs base: {reduccion_comb2:.2f}%")
+    print(f"   Factor de mejora: {factor_mejora2:.2f}x")
+    
+    print("\n" + "="*80)
+    print("CONCLUSIÓN:")
+    mejor_var = min(var_base, var_antiteticas, var_vc, var_combinada1, var_combinada2)
+    if mejor_var == var_combinada1:
+        print("✓ ENFOQUE 1 (Antitéticas → VC) es el MEJOR método")
+    elif mejor_var == var_combinada2:
+        print("✓ ENFOQUE 2 (VC → Antitéticas) es el MEJOR método")
+    elif mejor_var == var_vc:
+        print("✓ Solo Variables de Control es el MEJOR método")
+    elif mejor_var == var_antiteticas:
+        print("✓ Solo Variables Antitéticas es el MEJOR método")
     else:
-        # Caso base
-        for i in range(iteraciones):
-            env = sp.Environment()
-            p = Pizzeria(env)
-            p.iniciar_simulacion(tiempo_horas, i, logs=False)
-            met = p.obtener_metricas()
-            lista_resultados.append(met)
-            estimadores_utilidad.append(met['Utilidad'])
-
-        media = np.mean(estimadores_utilidad)
-        var_est = np.var(estimadores_utilidad, ddof=1) / iteraciones
-        std_est = np.sqrt(var_est)
-
-        print("\n===== RESULTADOS CASO BASE (réplicas independientes) =====")
-        print(f"Número de réplicas         = {iteraciones}")
-        print(f"Media estimador utilidad   = {media:,.2f}")
-        print(f"Varianza del estimador    = {var_est:,.2f}")
-        print(f"Desviación estándar       = {std_est:,.2f}")
-        print("==========================================================\n")
-
-        return lista_resultados, {
-            'metodo': 'base',
-            'media': media,
-            'varianza': var_est,
-            'std': std_est,
-            'n_replicas': iteraciones,
-            'estimadores': estimadores_utilidad,
-        }
+        print("⚠ Caso base tiene menor varianza (métodos no efectivos)")
+    print("="*80 + "\n")
+    
+    estadisticas = {
+        'metodo': 'Combinado (Variables Antitéticas + Múltiples Variables de Control)',
+        'n_pares': pares,
+        'n_replicas': iteraciones,
+        'media_base': media_base,
+        'var_base': var_base,
+        'media_antiteticas': media_antiteticas,
+        'var_antiteticas': var_antiteticas,
+        'media_vc': media_vc,
+        'var_vc': var_vc,
+        'media_combinada_enfoque1': media_combinada1,
+        'var_combinada_enfoque1': var_combinada1,
+        'media_combinada_enfoque2': media_combinada2,
+        'var_combinada_enfoque2': var_combinada2,
+        'coeficientes_beta_enfoque1': beta_pares.tolist(),
+        'coeficientes_beta_enfoque2': beta.tolist(),
+        'reduccion_antiteticas_porcentaje': reduccion_anti,
+        'reduccion_vc_porcentaje': reduccion_vc,
+        'reduccion_combinada1_porcentaje': reduccion_comb1,
+        'reduccion_combinada2_porcentaje': reduccion_comb2,
+        'factor_mejora1': factor_mejora1,
+        'factor_mejora2': factor_mejora2
+    }
+    
+    return lista_resultados, estadisticas
 
 
 if __name__ == "__main__":
-    replicas_simulación(50, tiempo_simulacion, True)
+    replicas_simulacion_combinada(50, tiempo_simulacion)
+
+
+
+    
+
+
+

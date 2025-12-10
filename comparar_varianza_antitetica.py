@@ -53,13 +53,16 @@ print("="*80 + "\n")
 # Guardar resultados en archivo
 import pandas as pd
 
+n_base = stats_base.get('n_replicas', n_replicas)
+n_anti = stats_anti.get('n_pares', n_replicas // 2)
+
 df_comparacion = pd.DataFrame({
     'Método': ['Caso Base', 'Variables Antitéticas'],
     'Media': [stats_base['media'], stats_anti['media']],
     'Varianza': [stats_base['varianza'], stats_anti['varianza']],
     'Desviación Estándar': [stats_base['std'], stats_anti['std']],
-    'N': [stats_base['n_replicas'], stats_anti['n_pares']]
+    'N': [n_base, n_anti]
 })
 
-df_comparacion.to_csv('comparacion_varianza.csv', index=False)
-print("✅ Resultados guardados en 'comparacion_varianza.csv'\n")
+df_comparacion.to_csv('comparacion_varianza_antitetica.csv', index=False)
+print("✅ Resultados guardados en 'comparacion_varianza_antitetica.csv'\n")

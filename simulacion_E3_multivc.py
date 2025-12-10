@@ -161,10 +161,18 @@ class Pizzeria:
         
         self.utilidad = self.ingresos - self.costos
         
-        # Variables de control: registrar tiempos individuales
-        self.tiempos_coccion = []  # Para variable de control
-        self.tiempos_despacho = []  # Para variable de control (ida + vuelta)
-        self.tiempos_llamada = []  # Para variable de control
+        # Variables de control: registrar tiempos individuales de TODAS las operaciones
+        self.tiempos_llamada = []  # xi_1 para llamadas (Exp(250s))
+        self.tiempos_salsa = []    # gamma_1 para poner salsa (Beta)
+        self.tiempos_queso = []    # gamma_2 para poner queso (Triangular)
+        self.tiempos_pepperoni = []  # gamma_3 para poner pepperoni (Lognormal)
+        self.tiempos_carnes = []   # gamma_4 para poner carnes (Uniform)
+        self.tiempos_horno = []    # delta para hornear (Lognormal)
+        self.tiempos_embalaje = [] # epsilon para embalar (Triangular)
+        self.tiempos_despacho = [] # tiempo ida al domicilio (Gamma)
+        
+        # Variables adicionales de control con media teórica conocida
+        self.tiempos_entre_llamadas = []  # Para calcular promedio de tiempos entre llegadas
 
     
     def iniciar_simulacion(self, tiempo_horas, seed, logs=False):
@@ -261,7 +269,7 @@ class Pizzeria:
         total_pizzas = self.pizzas_queso + self.pizzas_pepperoni + self.pizzas_carnes
         
         # Calcular tiempos promedio para variables de control
-        tiempo_promedio_coccion = np.mean(self.tiempos_coccion) if self.tiempos_coccion else 0
+        tiempo_promedio_coccion = np.mean(self.tiempos_horno) if self.tiempos_horno else 0
         tiempo_promedio_despacho = np.mean(self.tiempos_despacho) if self.tiempos_despacho else 0
         
         return {
@@ -384,6 +392,8 @@ class Pizzeria:
                 yield self.env.timeout(self.tiempo_limite - self.env.now)
                 continue
             else: 
+                # Registrar tiempo entre llamadas (en horas)
+                self.tiempos_entre_llamadas.append(tiempo_proxima_llamada)
                 yield self.env.timeout(tiempo_proxima_llamada)
             
             # Actualizamos métricas
@@ -523,6 +533,7 @@ class Pizzeria:
                         yield self.evento_inventario_repuesto[self.salsa_de_tomate]
                 # Agregamos Salsa
                 gamma_1 = self.rng.beta(a = 5, b = 2.2)/60
+                self.tiempos_salsa.append(gamma_1 * 60)  # Registrar en minutos
                 yield self.env.timeout(gamma_1) # Esperamos a que se ponga la salsa
                 # Descontamos la salsa (continuo)
                 yield self.salsa_de_tomate.get(xi_1)
@@ -542,6 +553,7 @@ class Pizzeria:
                             self.log(f'Reposición de queso mozzarella completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
                 # Agregamos queso
                 gamma_2 = self.rng.triangular(left = 0.9, mode = 1, right = 1.2)/60
+                self.tiempos_queso.append(gamma_2 * 60)  # Registrar en minutos
                 yield self.env.timeout(gamma_2) # Esperamos a que se ponga el queso
                 # Descontamos queso
                 yield self.queso_mozzarella.get(xi_2)
@@ -563,6 +575,7 @@ class Pizzeria:
                                 self.log(f'Reposición de pepperoni completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
                     # Agregamos pepperoni
                     gamma_3 = self.rng.lognormal(mean=0.5, sigma=0.25)/60
+                    self.tiempos_pepperoni.append(gamma_3 * 60)  # Registrar en minutos
                     yield self.env.timeout(gamma_3) # Esperamos a que se ponga el pepperoni
                     # Descontamos pepperoni
                     if xi_3 > 0:
@@ -585,6 +598,7 @@ class Pizzeria:
                                 self.log(f'Reposición de mix de carnes completada, ahora se puede preparar la pizza {num_pizza} del cliente {cliente}.')
                     # Agregamos mix
                     gamma_4 = self.rng.uniform(low = 1, high = 1.8)/60
+                    self.tiempos_carnes.append(gamma_4 * 60)  # Registrar en minutos
                     yield self.env.timeout(gamma_4) # Esperamos a que se ponga el mix
                     # Descontamos Mix
                     if xi_4 > 0:
@@ -601,7 +615,7 @@ class Pizzeria:
             if self.logs:
                 self.log(f'La pizza {num_pizza} del cliente {cliente} está en el horno.')
             delta = self.rng.lognormal(mean=2.5, sigma=0.2)/60
-            self.tiempos_coccion.append(delta * 60)  # Registrar en minutos para variable de control
+            self.tiempos_horno.append(delta * 60)  # Registrar en minutos
             yield self.env.timeout(delta)
             if self.logs:
                 self.log(f'La pizza {num_pizza} del cliente {cliente} salió del horno, solicitando embalaje.')
@@ -618,6 +632,7 @@ class Pizzeria:
                 if self.logs:
                     self.log(f'La pizza {num_pizza} del cliente {cliente} está siendo embalada.')
                 epsilon = self.rng.triangular(left = 1.1, mode = 2, right = 2.3)/60
+                self.tiempos_embalaje.append(epsilon * 60)  # Registrar en minutos
                 yield self.env.timeout(epsilon)
                 if self.logs:
                     self.log(f'La pizza {num_pizza} del cliente {cliente} ha sido embalada.')
@@ -694,7 +709,7 @@ class Pizzeria:
         yield self.env.timeout(10) # Iniciar simulación a las 10 AM 
         
         while True:
-            if self.env.now >= self.tiempo_limite:
+            if self.env.now + 3 >= self.tiempo_limite:
                 break
             tiempo_proxima_revision = self.obtener_tiempo_proxima_revision_salsa(self.env.now)
             yield self.env.timeout(tiempo_proxima_revision) # Revisamos cada 30 minutos en jornada laboral
@@ -1185,27 +1200,204 @@ def replicas_simulación(iteraciones, tiempo_horas, usar_variable_control=False)
         }
     
     return lista_resultados, estadisticas
-            
 
-if __name__ == "__main__":
-    for i in range(numero_replicas):
+
+def replicas_control_multiple_ortogonal(n_replicas=100, tiempo_horas=168, semilla_inicial=42):
+    """
+    Variables de control con múltiples variables ORTOGONALES usando tiempos REALES de la simulación.
+    
+    Variables de control:
+    X1-X8: tiempos promedio reales de proceso (beta, gamma_1, ..., delta, epsilon, despacho)
+    X9: tiempo promedio entre llamadas (proceso de renovación no homogéneo)
+    X10: proporción de pedidos premium (Bernoulli(3/20))
+    """
+    
+    print("="*80)
+    print("VARIABLES DE CONTROL MÚLTIPLES ORTOGONALES (TIEMPOS REALES)")
+    print("="*80)
+    print(f"\nVariables de control:")
+    print(f"  X1 = Promedio tiempo de llamada (Gamma)")
+    print(f"  X2 = Promedio tiempo de poner salsa (Beta)")
+    print(f"  X3 = Promedio tiempo de poner queso (Triangular)")
+    print(f"  X4 = Promedio tiempo de poner pepperoni (Lognormal)")
+    print(f"  X5 = Promedio tiempo de poner carnes (Uniform)")
+    print(f"  X6 = Promedio tiempo de cocción en horno (Lognormal)")
+    print(f"  X7 = Promedio tiempo de embalaje (Triangular)")
+    print(f"  X8 = Promedio tiempo de despacho (Gamma)")
+    print(f"  X9 = Promedio tiempo entre llamadas (Proceso renovación)")
+    print(f"  X10 = Proporción pedidos premium (Bernoulli p=3/20)")
+    print(f"\nTotal de réplicas: {n_replicas}\n")
+    
+    utilidades = []
+    X_matrix_list = []
+    
+    print("Ejecutando simulaciones...")
+    
+    for i in range(n_replicas):
+        np.random.seed(semilla_inicial + i)
         env = sp.Environment()
         pizzeria = Pizzeria(env)
-        pizzeria.iniciar_simulacion(tiempo_simulacion, i, logs=logs)
-
-        print(f'Replica {i+1} completada.')
-        print()
-        print(pizzeria.obtener_metricas())
-        if logs:
-            pizzeria.generar_reporte_logs(f'reporte_logs_replica_{i+1}.txt')
-
-        print("")
-        print("--------------------------------")
-        print("")
-
-
-
+        pizzeria.iniciar_simulacion(tiempo_horas, seed=semilla_inicial+i, logs=False)
+        
+        metricas = pizzeria.obtener_metricas()
+        utilidad = metricas['Utilidad']
+        if isinstance(utilidad, np.ndarray):
+            utilidad = utilidad.item() if utilidad.size == 1 else utilidad[0]
+        
+        utilidades.append(utilidad)
+        
+        # Extraer PROMEDIOS de tiempos REALES capturados durante la simulación
+        x1 = np.mean(pizzeria.tiempos_llamada) if len(pizzeria.tiempos_llamada) > 0 else 0
+        x2 = np.mean(pizzeria.tiempos_salsa) if len(pizzeria.tiempos_salsa) > 0 else 0
+        x3 = np.mean(pizzeria.tiempos_queso) if len(pizzeria.tiempos_queso) > 0 else 0
+        x4 = np.mean(pizzeria.tiempos_pepperoni) if len(pizzeria.tiempos_pepperoni) > 0 else 0
+        x5 = np.mean(pizzeria.tiempos_carnes) if len(pizzeria.tiempos_carnes) > 0 else 0
+        x6 = np.mean(pizzeria.tiempos_horno) if len(pizzeria.tiempos_horno) > 0 else 0
+        x7 = np.mean(pizzeria.tiempos_embalaje) if len(pizzeria.tiempos_embalaje) > 0 else 0
+        x8 = np.mean(pizzeria.tiempos_despacho) if len(pizzeria.tiempos_despacho) > 0 else 0
+        
+        # Variables adicionales con media teórica conocida
+        x9 = np.mean(pizzeria.tiempos_entre_llamadas) if len(pizzeria.tiempos_entre_llamadas) > 0 else 0  # horas
+        x10 = pizzeria.pedidos_premium_totales / max(pizzeria.pedidos_premium_totales + pizzeria.pedidos_normales_totales, 1)  # proporción
+        
+        X_matrix_list.append([x1, x2, x3, x4, x5, x6, x7, x8, x9, x10])
+        
+        if (i+1) % 10 == 0:
+            print(f"  Réplicas completadas: {i+1}/{n_replicas}")
     
+    print(f"\nRéplicas totales: {n_replicas}")
+    
+    # Convertir a arrays
+    Y = np.array(utilidades)
+    X_matrix = np.array(X_matrix_list)  # n x 10
+    
+    # Estadísticas base
+    media_Y = np.mean(Y)
+    var_Y = np.var(Y, ddof=1)
+    var_simple = var_Y / n_replicas
+    
+    # Calcular medias teóricas E[X] para las variables de control
+    # X1-X8: Usar medias observadas (distribuciones con parámetros conocidos pero cálculo complejo)
+    E_X_tiempos = np.mean(X_matrix[:, :8], axis=0)
+    
+    # X9: Tiempo promedio entre llamadas (proceso de renovación no homogéneo)
+    # E[T] = suma ponderada de 1/λ_i por el tiempo en cada estado
+    # Días laborables (5/7): 10-22h, 12 horas operativas
+    tasas_normal = [2, 6, 12, 20, 12, 14, 12, 10, 9, 8, 6, 4]  # λ por hora
+    tiempos_normal = [1/tasa for tasa in tasas_normal]  # E[T_i] = 1/λ_i horas
+    E_T_normal = np.mean(tiempos_normal)  # Promedio ponderado uniforme
+    
+    # Fines de semana (2/7): 10-23h, 14 horas operativas
+    tasas_finde = [2, 8, 18, 25, 25, 24, 18, 12, 11, 10, 9, 8, 6, 4]  # última hora: 23h con tasa 4
+    tiempos_finde = [1/tasa for tasa in tasas_finde]
+    E_T_finde = np.mean(tiempos_finde)
+    
+    # Media teórica global (5 días laborables + 2 días fin de semana)
+    E_X9 = (5 * E_T_normal + 2 * E_T_finde) / 7
+    
+    # X10: Proporción de pedidos premium ~ Bernoulli(p=3/20)
+    E_X10 = 3/20  # = 0.15
+    
+    E_X = np.concatenate([E_X_tiempos, [E_X9, E_X10]])
+    
+    # Centrar variables USANDO MEDIAS TEÓRICAS para X9 y X10
+    X_centered = X_matrix - E_X
+    Y_centered = Y - media_Y
+    
+    # Diagnóstico de correlación
+    print("\n" + "="*80)
+    print("DIAGNÓSTICO DE CORRELACIÓN")
+    print("="*80)
+    
+    # Matriz de correlación entre variables de control
+    corr_matrix = np.corrcoef(X_matrix.T)
+    print("\nMatriz de correlación entre X1...X10:")
+    print("(valores cercanos a ±1 indican multicolinealidad)")
+    labels = ['X1:llam', 'X2:sals', 'X3:ques', 'X4:pepp', 'X5:carn', 'X6:horn', 'X7:emba', 'X8:desp', 'X9:inte', 'X10:prem']
+    print("     ", "  ".join(labels))
+    for i, label in enumerate(labels):
+        row_str = f"{label} "
+        for j in range(10):
+            if i == j:
+                row_str += "  1.00 "
+            else:
+                row_str += f"{corr_matrix[i,j]:6.2f} "
+        print(row_str)
+    
+    # Correlación de cada X con Y
+    print("\nCorrelación de cada variable con Y (utilidad):")
+    var_labels = ['llamada', 'salsa', 'queso', 'pepperoni', 'carnes', 'horno', 'embalaje', 'despacho', 
+                  'tiempo_inter', 'prop_premium']
+    for i, label in enumerate(var_labels):
+        corr_xy = np.corrcoef(X_matrix[:, i], Y)[0, 1]
+        print(f"  ρ(Y, X{i+1:2d}_{label:13s}) = {corr_xy:7.4f}")
+    
+    # Regresión múltiple: Y = β0 + β'X
+    try:
+        beta = np.linalg.lstsq(X_centered, Y_centered, rcond=None)[0]
+        
+        # Estimador con variables de control
+        Y_control = Y - X_centered @ beta
+        
+        media_control = np.mean(Y_control)
+        var_control = np.var(Y_control, ddof=1) / n_replicas
+        
+    except np.linalg.LinAlgError:
+        print("\n⚠️  Error: Matriz singular. Variables altamente correlacionadas.")
+        media_control = media_Y
+        var_control = var_simple
+        beta = np.zeros(10)
+    
+    # Resultados
+    print("\n" + "="*80)
+    print("RESULTADOS")
+    print("="*80)
+    
+    print(f"\nMedias teóricas E[X] calculadas:")
+    print(f"  E[X9 ] (tiempo entre llamadas) = {E_X9:.4f} horas")
+    print(f"  E[X10] (proporción premium)    = {E_X10:.4f}")
+    
+    print(f"\nCoeficientes de control (β):")
+    coef_labels = ['llamada', 'salsa', 'queso', 'pepperoni', 'carnes', 'horno', 'embalaje', 'despacho',
+                   'tiempo_inter', 'prop_prem']
+    for i, label in enumerate(coef_labels):
+        print(f"  β{i+1:2d} ({label:13s}) = {beta[i]:,.4f}")
+    
+    print(f"\nMuestreo simple:")
+    print(f"  Utilidad media: ${media_Y:,.2f}")
+    print(f"  Var(Ȳ) = {var_simple:,.2f}")
+    print(f"  SD = ${np.sqrt(var_simple):,.2f}")
+    
+    print(f"\nCon variables de control:")
+    print(f"  Utilidad media: ${media_control:,.2f}")
+    print(f"  Var(Ȳ_control) = {var_control:,.2f}")
+    print(f"  SD = ${np.sqrt(var_control):,.2f}")
+    
+    if var_simple > var_control:
+        reduccion = (var_simple - var_control) / var_simple * 100
+        factor = var_simple / var_control
+        print(f"\n✓ Reducción de varianza: {reduccion:.2f}%")
+        print(f"✓ Factor de reducción: {factor:.2f}x")
+    else:
+        print(f"\n✗ No hubo reducción de varianza (método empeoró)")
+    
+    print("="*80 + "\n")
+    
+    estadisticas = {
+        'metodo': 'Variables de Control Múltiples Ortogonales (Tiempos Reales)',
+        'n_replicas': n_replicas,
+        'media_simple': media_Y,
+        'var_simple': var_simple,
+        'media_control': media_control,
+        'var_control': var_control,
+        'coeficientes_beta': beta.tolist(),
+        'reduccion_porcentaje': (var_simple - var_control) / var_simple * 100 if var_simple > var_control else 0
+    }
+    
+    return utilidades, estadisticas
 
 
+if __name__ == "__main__":
+    # Ejecutar con variables de control múltiples ortogonales
+    replicas_control_multiple_ortogonal(100, tiempo_simulacion)
 
